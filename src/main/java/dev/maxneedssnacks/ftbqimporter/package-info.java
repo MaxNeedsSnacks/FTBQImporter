@@ -1,0 +1,3 @@
+@mcp.MethodsReturnNonnullByDefault
+@javax.annotation.ParametersAreNonnullByDefault
+package dev.maxneedssnacks.ftbqimporter;

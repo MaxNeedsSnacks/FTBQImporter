@@ -1,0 +1,17 @@
+[
+	{
+		"modid": "ftbqimporter",
+		"name": "FTB Quests Importer",
+		"description": "A Better Questing Importer for FTBQuests",
+		"version": "${version}",
+		"mcversion": "${mcversion}",
+		"url": "",
+		"updateUrl": "",
+		"authorList": ["LatvianModder", "MaxNeedsSnacks"],
+		"credits": "",
+		"logoFile": "",
+		"screenshots": [],
+		"parent": "",
+		"dependencies": []
+	}
+]
