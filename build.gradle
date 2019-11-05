@@ -54,8 +54,9 @@ repositories {
 }
 
 dependencies {
-    compile "com.feed_the_beast.mods:FTBLib:${ftblib_version}"
-    compile "com.feed_the_beast.mods:FTBQuests:${ftbq_version}"
+    deobfCompile "com.feed_the_beast.mods:FTBLib:${ftblib_version}"
+    deobfCompile "com.feed_the_beast.mods:FTBQuests:${ftbq_version}"
+    //deobfCompile "com.feed_the_beast.mods:FTBUtilities:5.+"
     deobfCompile "com.latmod.mods:ItemFilters:${filters_version}"
 }
 

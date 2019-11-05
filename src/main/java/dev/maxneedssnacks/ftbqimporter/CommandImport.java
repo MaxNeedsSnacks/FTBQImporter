@@ -1,6 +1,8 @@
 package dev.maxneedssnacks.ftbqimporter;
 
 import com.feed_the_beast.ftblib.lib.config.EnumTristate;
+import com.feed_the_beast.ftblib.lib.data.ForgePlayer;
+import com.feed_the_beast.ftblib.lib.data.Universe;
 import com.feed_the_beast.ftblib.lib.io.DataReader;
 import com.feed_the_beast.ftblib.lib.util.FileUtils;
 import com.feed_the_beast.ftblib.lib.util.StringUtils;
@@ -13,9 +15,7 @@ import com.feed_the_beast.ftbquests.quest.loot.RewardTable;
 import com.feed_the_beast.ftbquests.quest.loot.WeightedReward;
 import com.feed_the_beast.ftbquests.quest.reward.*;
 import com.feed_the_beast.ftbquests.quest.task.*;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
+import com.google.gson.*;
 import com.latmod.mods.itemfilters.api.IItemFilter;
 import com.latmod.mods.itemfilters.api.ItemFiltersAPI;
 import com.latmod.mods.itemfilters.filters.NBTMatchingMode;
@@ -23,8 +23,7 @@ import com.latmod.mods.itemfilters.filters.OreDictionaryFilter;
 import com.latmod.mods.itemfilters.item.ItemFilter;
 import com.latmod.mods.itemfilters.item.ItemFiltersItems;
 import com.latmod.mods.itemfilters.item.ItemMissing;
-import net.minecraft.command.CommandBase;
-import net.minecraft.command.ICommandSender;
+import net.minecraft.command.*;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.JsonToNBT;
 import net.minecraft.nbt.NBTTagCompound;
@@ -37,6 +36,9 @@ import net.minecraftforge.oredict.OreDictionary;
 
 import javax.annotation.Nullable;
 import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.Writer;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -52,13 +54,30 @@ public class CommandImport extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/ftbq_import [-i | -l | -c]";
+        return "/ftbq_import <quests|progress> [-i, -l, -c]";
     }
 
     @Override
-    public void execute(MinecraftServer server, ICommandSender sender, String[] args) {
+    public void execute(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {
+        if (args.length == 0) {
+            throw new WrongUsageException(getUsage(sender));
+        }
 
-        List<String> flags = Arrays.stream(args).filter(a -> a.startsWith("-")).collect(Collectors.toList());
+        switch (args[0].toLowerCase()) {
+            case "q":
+            case "quests":
+                importQuests(server, sender, Arrays.asList(args).subList(1, args.length));
+                break;
+            case "p":
+            case "progress":
+                importProgress(server, sender, Arrays.asList(args).subList(1, args.length));
+                break;
+            default:
+                throw new WrongUsageException(getUsage(sender));
+        }
+    }
+
+    public void importQuests(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
 
         if (!flags.isEmpty()) {
             sender.sendMessage(new TextComponentString("Flags supplied: " + joinNiceStringFromCollection(flags)));
@@ -170,6 +189,7 @@ public class CommandImport extends CommandBase {
                         if (quest.taskLogicAnd) {
                             for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
                                 BQItemTask task = new BQItemTask();
+                                task.id = Integer.parseInt(taskEntry.getKey());
                                 task.items = new ArrayList<>();
                                 task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
                                 task.consume = taskJson.get("consume").getAsBoolean();
@@ -182,6 +202,7 @@ public class CommandImport extends CommandBase {
                             }
                         } else {
                             BQItemTask task = new BQItemTask();
+                            task.id = Integer.parseInt(taskEntry.getKey());
                             task.items = new ArrayList<>();
                             task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
                             task.consume = taskJson.get("consume").getAsBoolean();
@@ -208,6 +229,7 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:xp": {
                         BQXPTask task = new BQXPTask();
+                        task.id = Integer.parseInt(taskEntry.getKey());
                         task.xp = taskJson.get("amount").getAsLong();
                         task.consume = taskJson.get("consume").getAsInt() == 1;
                         task.levels = taskJson.get("isLevels").getAsInt() == 1;
@@ -217,6 +239,7 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:hunt": {
                         BQHuntTask task = new BQHuntTask();
+                        task.id = Integer.parseInt(taskEntry.getKey());
                         task.target = taskJson.get("target").getAsString();
                         task.required = taskJson.get("required").getAsLong();
                         quest.tasks.add(task);
@@ -225,6 +248,7 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:location": {
                         BQLocationTask task = new BQLocationTask();
+                        task.id = Integer.parseInt(taskEntry.getKey());
                         task.x = taskJson.get("posX").getAsInt();
                         task.y = taskJson.get("posY").getAsInt();
                         task.z = taskJson.get("posZ").getAsInt();
@@ -336,7 +360,8 @@ public class CommandImport extends CommandBase {
 
         // remap old quest ids to new imported quests
 
-        Map<Integer, Quest> newQuestMap = new HashMap<>();
+        Map<Integer, Integer> newQuestMap = new HashMap<>();
+        Map<Integer, Map<Integer, Integer>> questTaskMap = new HashMap<>();
 
         for (BQChapter chapter : chapters) {
             Chapter c = new Chapter(f);
@@ -348,8 +373,9 @@ public class CommandImport extends CommandBase {
 
             for (BQQuest quest : chapter.quests) {
                 Quest q = new Quest(c);
-                newQuestMap.put(quest.id, q);
                 q.id = f.newID();
+                newQuestMap.put(quest.id, q.id);
+                questTaskMap.put(q.id, new HashMap<>());
                 c.quests.add(q);
                 q.title = quest.name;
                 q.description.addAll(Arrays.asList(quest.description));
@@ -367,6 +393,8 @@ public class CommandImport extends CommandBase {
                     Task t = task.create(q);
                     t.id = f.newID();
                     q.tasks.add(t);
+
+                    questTaskMap.get(q.id).put(task.id, t.id);
                 }
 
                 for (BQReward reward : quest.rewards) {
@@ -388,13 +416,13 @@ public class CommandImport extends CommandBase {
         for (BQChapter chapter : chapters) {
             for (BQQuest quest : chapter.quests) {
                 if (quest.dependencies.length > 0) {
-                    Quest q = newQuestMap.get(quest.id);
+                    Quest q = f.getQuest(newQuestMap.get(quest.id));
 
                     for (int d : quest.dependencies) {
                         BQQuest d1 = questMap.get(d);
 
                         if (d1 != null) {
-                            Quest q1 = newQuestMap.get(d1.id);
+                            Quest q1 = f.getQuest(newQuestMap.get(d1.id));
 
                             if (q1 != null) {
                                 q.dependencies.add(q1);
@@ -409,9 +437,73 @@ public class CommandImport extends CommandBase {
         f.save();
         f.saveNow();
 
+        Map<Integer, Map.Entry<Integer, Map<Integer, Integer>>> completeQuestMap = newQuestMap.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey, intQuest -> new AbstractMap.SimpleEntry<>(
+                        intQuest.getValue(), questTaskMap.get(intQuest.getValue()))));
+
+
+        try {
+            Writer writer = new FileWriter(new File(Loader.instance().getConfigDir(), "imported_quests.json"));
+            Gson importedQuests = new GsonBuilder().enableComplexMapKeySerialization().setPrettyPrinting().create();
+            importedQuests.toJson(completeQuestMap, writer);
+            writer.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfuly imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
         server.getPlayerList().sendMessage(new TextComponentString("Make sure to double-check everything as well, as the two mods are fundamentally different from one another."));
+    }
+
+    public void importProgress(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
+        throw new CommandNotFoundException("This command is currently work in progress!");
+    }
+
+    // TODO: move this to importProgress
+    private void handleParties(MinecraftServer server) {
+        final Universe u = Universe.get();
+
+        JsonElement partiesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestingParties.json")).safeJson();
+
+        if (!partiesJson0.isJsonObject()) {
+            server.sendMessage(new TextComponentString("betterquesting/QuestingParties.json was not found in your save!"));
+            return;
+        }
+
+        JsonObject partiesJson = fix(partiesJson0).getAsJsonObject();
+        List<BQParty> parties = new ArrayList<>();
+        Collection<ForgePlayer> knownPlayers = new HashSet<>();
+
+        // Build a List of all BQ Parties
+        for (Map.Entry<String, JsonElement> entry : partiesJson.get("parties").getAsJsonObject().entrySet()) {
+            JsonObject partyJson = entry.getValue().getAsJsonObject();
+            JsonObject properties = partyJson.get("properties").getAsJsonObject().get("betterquesting").getAsJsonObject();
+
+            // if the party has separate rewards for each player then there is no purpose in creating a new FTBLib team for them
+            if (properties.has("partysinglereward") && properties.get("partysinglereward").getAsInt() == 1) continue;
+
+            BQParty party = new BQParty();
+            party.id = partyJson.get("partyID").getAsInt();
+            party.name = partyJson.get("properties").getAsJsonObject().get("name").getAsString().trim();
+
+            for (Map.Entry<String, JsonElement> memberEntry : partyJson.get("members").getAsJsonObject().entrySet()) {
+                JsonObject memberJson = memberEntry.getValue().getAsJsonObject();
+                if (memberJson.has("uuid") && memberJson.has("status")) {
+                    String uuid = memberJson.get("uuid").getAsString();
+                    String status = memberJson.get("status").getAsString();
+
+                    if (status.equals("INVITE")) continue;
+                    if (status.equals("OWNER")) party.owner = u.getPlayer(uuid);
+                    party.members.add(u.getPlayer(uuid));
+                    knownPlayers.add(u.getPlayer(uuid));
+                }
+            }
+
+            parties.add(party);
+        }
+
     }
 
     private ItemStack jsonItem(@Nullable JsonElement json0) {
@@ -514,6 +606,17 @@ public class CommandImport extends CommandBase {
         return json;
     }
 
+    // Party Stuff //
+
+    private static class BQParty {
+        int id;
+        String name;
+        ForgePlayer owner;
+        Collection<ForgePlayer> members;
+    }
+
+    // Quest & Chapter //
+
     private static class BQQuest {
         int id;
         int[] dependencies;
@@ -545,6 +648,8 @@ public class CommandImport extends CommandBase {
     // Tasks //
 
     private static abstract class BQTask {
+        int id;
+
         abstract Task create(Quest quest);
     }
 
