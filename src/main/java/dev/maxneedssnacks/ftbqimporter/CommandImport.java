@@ -52,7 +52,7 @@ public class CommandImport extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/ftbq_import [-i/--fix-icons | -l/--truncate-loot | -c/--auto-cmd]";
+        return "/ftbq_import [-i | -l | -c]";
     }
 
     @Override
@@ -63,8 +63,6 @@ public class CommandImport extends CommandBase {
         if (!flags.isEmpty()) {
             sender.sendMessage(new TextComponentString("Flags supplied: " + joinNiceStringFromCollection(flags)));
         }
-
-        flags = flags.stream().map(a -> a.substring(1)).collect(Collectors.toList());
 
         // additional flags that may be supplied
         boolean fix_icons = flags.contains("-i") || flags.contains("--fix-icons");
