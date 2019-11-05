@@ -5,6 +5,7 @@ import com.feed_the_beast.ftblib.lib.data.ForgePlayer;
 import com.feed_the_beast.ftblib.lib.data.Universe;
 import com.feed_the_beast.ftblib.lib.io.DataReader;
 import com.feed_the_beast.ftblib.lib.util.FileUtils;
+import com.feed_the_beast.ftblib.lib.util.JsonUtils;
 import com.feed_the_beast.ftblib.lib.util.StringUtils;
 import com.feed_the_beast.ftbquests.item.FTBQuestsItems;
 import com.feed_the_beast.ftbquests.quest.Chapter;
@@ -15,7 +16,9 @@ import com.feed_the_beast.ftbquests.quest.loot.RewardTable;
 import com.feed_the_beast.ftbquests.quest.loot.WeightedReward;
 import com.feed_the_beast.ftbquests.quest.reward.*;
 import com.feed_the_beast.ftbquests.quest.task.*;
-import com.google.gson.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.latmod.mods.itemfilters.api.IItemFilter;
 import com.latmod.mods.itemfilters.api.ItemFiltersAPI;
 import com.latmod.mods.itemfilters.filters.NBTMatchingMode;
@@ -36,11 +39,7 @@ import net.minecraftforge.oredict.OreDictionary;
 
 import javax.annotation.Nullable;
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.Writer;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * @author LatvianModder, MaxNeedsSnacks
@@ -437,20 +436,24 @@ public class CommandImport extends CommandBase {
         f.save();
         f.saveNow();
 
-        Map<Integer, Map.Entry<Integer, Map<Integer, Integer>>> completeQuestMap = newQuestMap.entrySet().stream().collect(Collectors.toMap(
-                Map.Entry::getKey, intQuest -> new AbstractMap.SimpleEntry<>(
-                        intQuest.getValue(), questTaskMap.get(intQuest.getValue()))));
+        JsonObject importedQuests = new JsonObject();
+        newQuestMap.forEach((bqQuest, ftbQuest) -> {
+            JsonObject questInfo = new JsonObject();
+            importedQuests.add(bqQuest.toString(), questInfo);
+            questInfo.addProperty("id", ftbQuest);
 
+            JsonObject taskInfo = new JsonObject();
+            questInfo.add("tasks", taskInfo);
+            questTaskMap.get(ftbQuest).forEach((bqTask, ftbTask) -> {
+                taskInfo.addProperty(bqTask.toString(), ftbTask);
+            });
+        });
 
-        try {
-            Writer writer = new FileWriter(new File(Loader.instance().getConfigDir(), "imported_quests.json"));
-            Gson importedQuests = new GsonBuilder().enableComplexMapKeySerialization().setPrettyPrinting().create();
-            importedQuests.toJson(completeQuestMap, writer);
-            writer.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        JsonObject toExport = new JsonObject();
+        toExport.addProperty("_version", 1);
+        toExport.add("data", importedQuests);
 
+        JsonUtils.toJsonSafe(new File(Loader.instance().getConfigDir(), "imported_quests.json"), toExport);
 
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfuly imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
