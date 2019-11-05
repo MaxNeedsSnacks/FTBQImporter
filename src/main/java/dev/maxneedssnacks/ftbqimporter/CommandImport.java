@@ -70,6 +70,7 @@ public class CommandImport extends CommandBase {
         boolean auto_cmd = flags.contains("-c") || flags.contains("--auto-cmd");
 
         JsonElement json0 = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultQuests.json")).safeJson();
+        JsonElement lootJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultLoot.json")).safeJson();
 
         if (!json0.isJsonObject()) {
             server.sendMessage(new TextComponentString("config/betterquesting/DefaultQuests.json not found!"));
@@ -79,12 +80,11 @@ public class CommandImport extends CommandBase {
         JsonObject json = fix(json0).getAsJsonObject();
 
         if (!json.get("format").getAsString().startsWith("2")) {
-            server.sendMessage(new TextComponentString("Old version of file (" + json.get("format").getAsString() + "), can't import!"));
+            server.sendMessage(new TextComponentString("Cannot import DefaultQuests.json with old version (" + json.get("format").getAsString() + ")!"));
             return;
         }
 
-        JsonElement lootJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultLoot.json")).safeJson();
-
+        // clear out existing files
         ServerQuestFile f = ServerQuestFile.INSTANCE;
         f.chapters.clear();
         f.rewardTables.clear();
@@ -92,8 +92,8 @@ public class CommandImport extends CommandBase {
 
         Map<Integer, BQQuest> questMap = new HashMap<>();
         List<BQChapter> chapters = new ArrayList<>();
-        ResourceLocation placeholder = new ResourceLocation("betterquesting:placeholder");
 
+        // region loot
         RewardTable crateTable = null;
 
         if (lootJson0.isJsonObject()) {
@@ -132,6 +132,7 @@ public class CommandImport extends CommandBase {
                 }
             }
         }
+        // endregion loot
 
         for (Map.Entry<String, JsonElement> entry : json.get("questDatabase").getAsJsonObject().entrySet()) {
             JsonObject questJson = entry.getValue().getAsJsonObject();
@@ -167,12 +168,12 @@ public class CommandImport extends CommandBase {
                     case "bq_standard:crafting":
                     case "bq_standard:retrieval": {
                         if (quest.taskLogicAnd) {
-                            for (Map.Entry<String, JsonElement> itemRewardEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
+                            for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
                                 BQItemTask task = new BQItemTask();
                                 task.items = new ArrayList<>();
                                 task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
                                 task.consume = taskJson.get("consume").getAsBoolean();
-                                ItemStack stack = jsonItem(itemRewardEntry.getValue(), true);
+                                ItemStack stack = jsonItem(taskItemEntry.getValue(), true);
 
                                 if (!stack.isEmpty()) {
                                     task.items.add(stack);
@@ -185,8 +186,8 @@ public class CommandImport extends CommandBase {
                             task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
                             task.consume = taskJson.get("consume").getAsBoolean();
 
-                            for (Map.Entry<String, JsonElement> itemRewardEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
-                                ItemStack item = jsonItem(itemRewardEntry.getValue(), true);
+                            for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
+                                ItemStack item = jsonItem(taskItemEntry.getValue(), true);
 
                                 if (!item.isEmpty()) {
                                     task.items.add(item);
@@ -234,7 +235,7 @@ public class CommandImport extends CommandBase {
                     }
 
                     default:
-                        sender.sendMessage(new TextComponentString("Can't import task with type " + type));
+                        sender.sendMessage(new TextComponentString("Can't import task with type " + type + ", you will have to manually re-add it!"));
                         break;
                 }
             }
@@ -297,7 +298,6 @@ public class CommandImport extends CommandBase {
                         BQCommandReward reward = new BQCommandReward();
                         reward.command = rewardJson.get("command").getAsString().replace("VAR_NAME", "@p");
                         reward.player = rewardJson.get("viaPlayer").getAsInt() == 1;
-                        reward.invisible = auto_cmd;
                         quest.rewards.add(reward);
                         break;
                     }
@@ -333,6 +333,8 @@ public class CommandImport extends CommandBase {
                 }
             }
         }
+
+        // remap old quest ids to new imported quests
 
         Map<Integer, Quest> newQuestMap = new HashMap<>();
 
@@ -374,9 +376,8 @@ public class CommandImport extends CommandBase {
                         r.team = EnumTristate.TRUE;
                     }
 
-                    if (quest.autoClaim) {
-                        r.autoclaim = RewardAutoClaim.ENABLED;
-                    }
+                    r.autoclaim = (reward instanceof BQCommandReward && auto_cmd) ? RewardAutoClaim.INVISIBLE :
+                            quest.autoClaim ? RewardAutoClaim.ENABLED : RewardAutoClaim.DEFAULT;
 
                     r.id = f.newID();
                     q.rewards.add(r);
@@ -408,8 +409,9 @@ public class CommandImport extends CommandBase {
         f.save();
         f.saveNow();
 
-        sender.sendMessage(new TextComponentString("Done!"));
-        server.getPlayerList().sendMessage(new TextComponentString("Server has imported BQ quests! Re-log to get updated quest book. Mods are very different, don't expect things to work right away."));
+        sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
+        server.getPlayerList().sendMessage(new TextComponentString("Server has successfuly imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
+        server.getPlayerList().sendMessage(new TextComponentString("Make sure to double-check everything as well, as the two mods are fundamentally different from one another."));
     }
 
     private ItemStack jsonItem(@Nullable JsonElement json0) {
@@ -483,8 +485,6 @@ public class CommandImport extends CommandBase {
         return ItemMissing.read(nbt);
     }
 
-    // Tasks //
-
     private JsonElement fix(JsonElement json) {
         if (json instanceof JsonObject) {
             JsonObject o = new JsonObject();
@@ -535,12 +535,14 @@ public class CommandImport extends CommandBase {
         }
     }
 
-    public static class BQChapter {
+    private static class BQChapter {
         List<BQQuest> quests;
         String name;
         String[] desc;
         ItemStack icon;
     }
+
+    // Tasks //
 
     private static abstract class BQTask {
         abstract Task create(Quest quest);
@@ -633,7 +635,7 @@ public class CommandImport extends CommandBase {
         }
     }
 
-// Rewards //
+    // Rewards //
 
     private static abstract class BQReward {
         abstract Reward create(Quest q);
@@ -699,14 +701,12 @@ public class CommandImport extends CommandBase {
     private static class BQCommandReward extends BQReward {
         String command;
         boolean player;
-        boolean invisible;
 
         @Override
         Reward create(Quest quest) {
             CommandReward reward = new CommandReward(quest);
             reward.command = command;
             reward.playerCommand = player;
-            reward.autoclaim = invisible ? RewardAutoClaim.INVISIBLE : RewardAutoClaim.DEFAULT;
             return reward;
         }
     }
