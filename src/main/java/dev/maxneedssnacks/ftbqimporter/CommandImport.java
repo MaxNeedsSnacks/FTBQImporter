@@ -1,13 +1,19 @@
 package dev.maxneedssnacks.ftbqimporter;
 
+import com.feed_the_beast.ftblib.events.team.ForgeTeamCreatedEvent;
+import com.feed_the_beast.ftblib.events.team.ForgeTeamPlayerJoinedEvent;
+import com.feed_the_beast.ftblib.lib.EnumTeamColor;
 import com.feed_the_beast.ftblib.lib.config.EnumTristate;
 import com.feed_the_beast.ftblib.lib.data.ForgePlayer;
+import com.feed_the_beast.ftblib.lib.data.ForgeTeam;
+import com.feed_the_beast.ftblib.lib.data.TeamType;
 import com.feed_the_beast.ftblib.lib.data.Universe;
 import com.feed_the_beast.ftblib.lib.io.DataReader;
 import com.feed_the_beast.ftblib.lib.util.FileUtils;
 import com.feed_the_beast.ftblib.lib.util.JsonUtils;
 import com.feed_the_beast.ftblib.lib.util.StringUtils;
 import com.feed_the_beast.ftbquests.item.FTBQuestsItems;
+import com.feed_the_beast.ftbquests.quest.ChangeProgress;
 import com.feed_the_beast.ftbquests.quest.Chapter;
 import com.feed_the_beast.ftbquests.quest.Quest;
 import com.feed_the_beast.ftbquests.quest.ServerQuestFile;
@@ -16,6 +22,7 @@ import com.feed_the_beast.ftbquests.quest.loot.RewardTable;
 import com.feed_the_beast.ftbquests.quest.loot.WeightedReward;
 import com.feed_the_beast.ftbquests.quest.reward.*;
 import com.feed_the_beast.ftbquests.quest.task.*;
+import com.feed_the_beast.ftbquests.util.ServerQuestData;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -26,7 +33,10 @@ import com.latmod.mods.itemfilters.filters.OreDictionaryFilter;
 import com.latmod.mods.itemfilters.item.ItemFilter;
 import com.latmod.mods.itemfilters.item.ItemFiltersItems;
 import com.latmod.mods.itemfilters.item.ItemMissing;
-import net.minecraft.command.*;
+import net.minecraft.command.CommandBase;
+import net.minecraft.command.CommandException;
+import net.minecraft.command.ICommandSender;
+import net.minecraft.command.WrongUsageException;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.JsonToNBT;
 import net.minecraft.nbt.NBTTagCompound;
@@ -107,6 +117,9 @@ public class CommandImport extends CommandBase {
         f.chapters.clear();
         f.rewardTables.clear();
         FileUtils.deleteSafe(f.getFolder());
+
+        // also clear out quest data in case of a re-import of quests
+        FileUtils.deleteSafe(new File(f.universe.getWorldDirectory(), "data/ftb_lib/teams/ftbquests"));
 
         Map<Integer, BQQuest> questMap = new HashMap<>();
         List<BQChapter> chapters = new ArrayList<>();
@@ -456,40 +469,49 @@ public class CommandImport extends CommandBase {
         JsonUtils.toJsonSafe(new File(Loader.instance().getConfigDir(), "imported_quests.json"), toExport);
 
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
-        server.getPlayerList().sendMessage(new TextComponentString("Server has successfuly imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
+        server.getPlayerList().sendMessage(new TextComponentString("Server has successfully imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
         server.getPlayerList().sendMessage(new TextComponentString("Make sure to double-check everything as well, as the two mods are fundamentally different from one another."));
     }
 
     public void importProgress(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
-        throw new CommandNotFoundException("This command is currently work in progress!");
-    }
-
-    // TODO: move this to importProgress
-    private void handleParties(MinecraftServer server) {
         final Universe u = Universe.get();
+        final int CONVERT_FILE_VERSION = 1;
 
         JsonElement partiesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestingParties.json")).safeJson();
-
         if (!partiesJson0.isJsonObject()) {
             server.sendMessage(new TextComponentString("betterquesting/QuestingParties.json was not found in your save!"));
             return;
         }
-
         JsonObject partiesJson = fix(partiesJson0).getAsJsonObject();
+
+        JsonElement namesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/NameCache.json")).safeJson();
+        if (!namesJson0.isJsonObject()) {
+            server.sendMessage(new TextComponentString("betterquesting/NameCache.json was not found in your save!"));
+            return;
+        }
+        JsonObject namesJson = fix(namesJson0).getAsJsonObject();
+
         List<BQParty> parties = new ArrayList<>();
-        Collection<ForgePlayer> knownPlayers = new HashSet<>();
+        List<BQParty> dummies = new ArrayList<>();
+
+        // build a list of solo players, starting with all players known to BQ
+        Collection<ForgePlayer> soloPlayers = new HashSet<>();
+        for (Map.Entry<String, JsonElement> entry : namesJson.get("nameCache").getAsJsonObject().entrySet()) {
+            ForgePlayer p = u.getPlayer(entry.getValue().getAsJsonObject().get("uuid").getAsString());
+            if (p != null) soloPlayers.add(p);
+        }
 
         // Build a List of all BQ Parties
         for (Map.Entry<String, JsonElement> entry : partiesJson.get("parties").getAsJsonObject().entrySet()) {
             JsonObject partyJson = entry.getValue().getAsJsonObject();
             JsonObject properties = partyJson.get("properties").getAsJsonObject().get("betterquesting").getAsJsonObject();
 
-            // if the party has separate rewards for each player then there is no purpose in creating a new FTBLib team for them
-            if (properties.has("partysinglereward") && properties.get("partysinglereward").getAsInt() == 1) continue;
-
             BQParty party = new BQParty();
             party.id = partyJson.get("partyID").getAsInt();
-            party.name = partyJson.get("properties").getAsJsonObject().get("name").getAsString().trim();
+            party.name = partyJson.get("properties").getAsJsonObject()
+                    .get("betterquesting").getAsJsonObject()
+                    .get("name").getAsString().trim();
+            party.members = new ArrayList<>();
 
             for (Map.Entry<String, JsonElement> memberEntry : partyJson.get("members").getAsJsonObject().entrySet()) {
                 JsonObject memberJson = memberEntry.getValue().getAsJsonObject();
@@ -497,16 +519,192 @@ public class CommandImport extends CommandBase {
                     String uuid = memberJson.get("uuid").getAsString();
                     String status = memberJson.get("status").getAsString();
 
-                    if (status.equals("INVITE")) continue;
-                    if (status.equals("OWNER")) party.owner = u.getPlayer(uuid);
-                    party.members.add(u.getPlayer(uuid));
-                    knownPlayers.add(u.getPlayer(uuid));
+                    ForgePlayer p = u.getPlayer(uuid);
+
+                    if (p == null || status.equals("INVITE")) continue;
+                    if (status.equals("OWNER")) party.owner = p;
+                    party.members.add(p);
+                    soloPlayers.remove(p);
                 }
             }
 
             parties.add(party);
         }
 
+        // create dummy parties for all of the solo players
+        for (ForgePlayer p : soloPlayers) {
+            BQParty dummy = new BQParty();
+            dummy.id = -1;
+            dummy.owner = p;
+            dummy.name = p.getName();
+            dummy.members = new ArrayList<>();
+            dummy.members.add(p);
+            dummies.add(dummy);
+            parties.add(dummy);
+        }
+
+        Map<ForgePlayer, ForgeTeam> progressTransferMap = new HashMap<>();
+
+        for (BQParty party : parties) {
+            ForgeTeam team;
+            ForgePlayer owner = party.owner;
+
+            // if owner has no forge team, create a new one and make them the owner
+            if (!owner.hasTeam()) {
+
+                String team_id_base = StringUtils.getID(owner.getName(), StringUtils.FLAG_ID_DEFAULTS);
+                String team_id = team_id_base;
+                while (u.getTeam(team_id).isValid()) {
+                    team_id = team_id_base + u.generateTeamUID((short) 0);
+                }
+
+                u.clearCache();
+                team = new ForgeTeam(u, u.generateTeamUID((short) 0), team_id, TeamType.PLAYER);
+                team.setColor(EnumTeamColor.NAME_MAP.getRandom(sender.getEntityWorld().rand));
+                owner.team = team;
+                team.owner = owner;
+                team.universe.addTeam(team);
+                new ForgeTeamCreatedEvent(team).post();
+                new ForgeTeamPlayerJoinedEvent(owner).post();
+
+                team.markDirty();
+                owner.markDirty();
+
+                if (owner.isOnline()) {
+                    owner.getPlayer().sendMessage(
+                            new TextComponentString("Quest data for your party is being synced with your new team " + team.getId()));
+                }
+
+            } else {
+
+                team = owner.team;
+
+                if (owner.isOnline()) {
+                    owner.getPlayer().sendMessage(
+                            new TextComponentString("Quest data for your party is being synced with your current team " + team.getId()));
+                }
+
+            }
+
+            for (ForgePlayer player : party.members) {
+                if (!player.equalsPlayer(owner) && player.isOnline()) {
+                    player.getPlayer().sendMessage(
+                            new TextComponentString("Quest data is being synced with your party owner's team " + team.getId() + ". Please join this team if you wish to keep your progress"));
+                }
+
+                progressTransferMap.putIfAbsent(player, team);
+            }
+        }
+
+        /**
+         * What we have:
+         *
+         * A list of parties
+         * A quest progress file
+         * A conversion map to convert old quest / task ids to new ones
+         * A map telling us where player progress needs to go
+         */
+
+        JsonElement progressJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestProgress.json")).safeJson();
+        if (!progressJson0.isJsonObject()) {
+            server.sendMessage(new TextComponentString("betterquesting/QuestProgress.json was not found in your save!"));
+            return;
+        }
+        JsonObject progressJson = fix(progressJson0).getAsJsonObject();
+
+        JsonElement convertJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "imported_quests.json")).safeJson();
+        if (!convertJson0.isJsonObject()) {
+            server.sendMessage(new TextComponentString("No conversion mapping was found in your config folder!"));
+            return;
+        }
+        JsonObject convertJson = convertJson0.getAsJsonObject();
+        if (!convertJson.has("_version") || convertJson.get("_version").getAsInt() != CONVERT_FILE_VERSION) {
+            server.sendMessage(new TextComponentString("The conversion mapping found is using a different format. Please run quest importing again!"));
+            return;
+        }
+
+        Collection<BQQuestData> oldProgressData = new HashSet<>();
+
+        for (Map.Entry<String, JsonElement> questProgressEntry : progressJson.get("questProgress").getAsJsonObject().entrySet()) {
+            JsonObject dataJson = questProgressEntry.getValue().getAsJsonObject();
+
+            BQQuestData questData = new BQQuestData();
+            questData.id = dataJson.get("questID").getAsInt();
+            questData.completed = new HashMap<>();
+            if (dataJson.has("completed")) {
+                for (Map.Entry<String, JsonElement> completedEntry : dataJson.get("completed").getAsJsonObject().entrySet()) {
+                    JsonObject completedJson = completedEntry.getValue().getAsJsonObject();
+
+                    String uuid = completedJson.get("uuid").getAsString();
+                    int claimed = completedJson.has("claimed") ? completedJson.get("claimed").getAsInt() : 0;
+
+                    ForgePlayer p = u.getPlayer(uuid);
+
+                    if (p == null) continue;
+                    questData.completed.put(p, claimed != 0);
+                }
+            }
+
+            questData.tasks = new ArrayList<>();
+            if (dataJson.has("tasks")) {
+                for (Map.Entry<String, JsonElement> taskDataEntry : dataJson.get("tasks").getAsJsonObject().entrySet()) {
+                    JsonObject taskDataJson = taskDataEntry.getValue().getAsJsonObject();
+
+                    BQTaskData taskData = new BQTaskData();
+                    taskData.id = taskDataJson.get("index").getAsInt();
+                    taskData.completeUsers = new ArrayList<>();
+                    for (Map.Entry<String, JsonElement> completeUserEntry : taskDataJson.get("completeUsers").getAsJsonObject().entrySet()) {
+                        taskData.completeUsers.add(u.getPlayer(completeUserEntry.getValue().getAsString()));
+                    }
+                    questData.tasks.add(taskData);
+                }
+            }
+
+            oldProgressData.add(questData);
+        }
+
+        ServerQuestFile f = ServerQuestFile.INSTANCE;
+
+        oldProgressData.forEach(questData -> {
+            getConvertedQuest(f, questData.id, convertJson.get("data").getAsJsonObject()).ifPresent(quest -> {
+                Collection<ForgeTeam> processed = new HashSet<>();
+
+                questData.completed.forEach((forgePlayer, claimed) -> {
+                    ForgeTeam team = progressTransferMap.get(forgePlayer);
+
+                    ServerQuestData teamData = ServerQuestData.get(team);
+
+                    if (!processed.contains(team)) {
+                        quest.forceProgress(teamData, ChangeProgress.COMPLETE_DEPS, false);
+                        processed.add(team);
+                    }
+
+                    if (claimed) {
+                        quest.rewards.forEach(reward -> teamData.setRewardClaimed(forgePlayer.getId(), reward));
+                    }
+                });
+
+                questData.tasks.forEach(taskData -> {
+                    getConvertedTask(f, questData.id, taskData.id, convertJson.get("data").getAsJsonObject()).ifPresent(task -> {
+                        Collection<ForgeTeam> processedTask = new HashSet<>();
+
+                        taskData.completeUsers.forEach(forgePlayer -> {
+                            ForgeTeam team = progressTransferMap.get(forgePlayer);
+
+                            ServerQuestData teamData = ServerQuestData.get(team);
+
+                            if (!(processed.contains(team) || processedTask.contains(team))) {
+                                task.forceProgress(teamData, ChangeProgress.COMPLETE_DEPS, false);
+                                processedTask.add(team);
+                            }
+                        });
+                    });
+                });
+            });
+        });
+
+        server.getPlayerList().sendMessage(new TextComponentString("Server has successfully migrated quest progression for all Better Questing parties to FTB Quests!"));
+        server.getPlayerList().sendMessage(new TextComponentString("Players, please note that you may be required to join your former party owner's team in order to get your progress back!"));
     }
 
     private ItemStack jsonItem(@Nullable JsonElement json0) {
@@ -580,6 +778,30 @@ public class CommandImport extends CommandBase {
         return ItemMissing.read(nbt);
     }
 
+    private Optional<Quest> getConvertedQuest(ServerQuestFile f, int id, JsonObject mapping) {
+
+        if (!mapping.has(Integer.toString(id))) return Optional.empty();
+
+        JsonObject mappedJson = mapping.get(Integer.toString(id)).getAsJsonObject();
+        int mappedID = mappedJson.get("id").getAsInt();
+
+        return Optional.ofNullable(f.getQuest(mappedID));
+    }
+
+    private Optional<Task> getConvertedTask(ServerQuestFile f, int qid, int tid, JsonObject mapping) {
+
+        if (!mapping.has(Integer.toString(qid))) return Optional.empty();
+
+        JsonObject mappedJson = mapping.get(Integer.toString(qid)).getAsJsonObject();
+        JsonObject mappedTasks = mappedJson.get("tasks").getAsJsonObject();
+
+        if (!mappedTasks.has(Integer.toString(tid))) return Optional.empty();
+
+        int mappedID = mappedTasks.get(Integer.toString(tid)).getAsInt();
+
+        return Optional.ofNullable(f.getTask(mappedID));
+    }
+
     private JsonElement fix(JsonElement json) {
         if (json instanceof JsonObject) {
             JsonObject o = new JsonObject();
@@ -609,13 +831,24 @@ public class CommandImport extends CommandBase {
         return json;
     }
 
-    // Party Stuff //
+    // Progress-Related Stuff //
 
     private static class BQParty {
         int id;
         String name;
         ForgePlayer owner;
         Collection<ForgePlayer> members;
+    }
+
+    private static class BQQuestData {
+        int id;
+        Map<ForgePlayer, Boolean> completed;
+        Collection<BQTaskData> tasks;
+    }
+
+    private static class BQTaskData {
+        int id;
+        Collection<ForgePlayer> completeUsers;
     }
 
     // Quest & Chapter //
