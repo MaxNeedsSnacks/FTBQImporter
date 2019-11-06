@@ -654,7 +654,10 @@ public class CommandImport extends CommandBase {
                     taskData.id = taskDataJson.get("index").getAsInt();
                     taskData.completeUsers = new ArrayList<>();
                     for (Map.Entry<String, JsonElement> completeUserEntry : taskDataJson.get("completeUsers").getAsJsonObject().entrySet()) {
-                        taskData.completeUsers.add(u.getPlayer(completeUserEntry.getValue().getAsString()));
+                        ForgePlayer p = u.getPlayer(completeUserEntry.getValue().getAsString());
+
+                        if (p == null) continue;
+                        taskData.completeUsers.add(p);
                     }
                     questData.tasks.add(taskData);
                 }
@@ -670,6 +673,8 @@ public class CommandImport extends CommandBase {
                 Collection<ForgeTeam> processed = new HashSet<>();
 
                 questData.completed.forEach((forgePlayer, claimed) -> {
+                    if (forgePlayer == null) return;
+
                     ForgeTeam team = progressTransferMap.get(forgePlayer);
 
                     ServerQuestData teamData = ServerQuestData.get(team);
@@ -689,6 +694,8 @@ public class CommandImport extends CommandBase {
                         Collection<ForgeTeam> processedTask = new HashSet<>();
 
                         taskData.completeUsers.forEach(forgePlayer -> {
+                            if (forgePlayer == null) return;
+
                             ForgeTeam team = progressTransferMap.get(forgePlayer);
 
                             ServerQuestData teamData = ServerQuestData.get(team);
