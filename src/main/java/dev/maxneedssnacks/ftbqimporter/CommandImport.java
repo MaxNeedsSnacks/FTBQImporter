@@ -201,7 +201,7 @@ public class CommandImport extends CommandBase {
                         if (quest.taskLogicAnd) {
                             for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
                                 BQItemTask task = new BQItemTask();
-                                task.id = Integer.parseInt(taskEntry.getKey());
+                                task.id = taskJson.get("index").getAsInt();
                                 task.items = new ArrayList<>();
                                 task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
                                 task.consume = taskJson.get("consume").getAsBoolean();
@@ -214,7 +214,7 @@ public class CommandImport extends CommandBase {
                             }
                         } else {
                             BQItemTask task = new BQItemTask();
-                            task.id = Integer.parseInt(taskEntry.getKey());
+                            task.id = taskJson.get("index").getAsInt();
                             task.items = new ArrayList<>();
                             task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
                             task.consume = taskJson.get("consume").getAsBoolean();
@@ -241,7 +241,7 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:xp": {
                         BQXPTask task = new BQXPTask();
-                        task.id = Integer.parseInt(taskEntry.getKey());
+                        task.id = taskJson.get("index").getAsInt();
                         task.xp = taskJson.get("amount").getAsLong();
                         task.consume = taskJson.get("consume").getAsInt() == 1;
                         task.levels = taskJson.get("isLevels").getAsInt() == 1;
@@ -251,7 +251,7 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:hunt": {
                         BQHuntTask task = new BQHuntTask();
-                        task.id = Integer.parseInt(taskEntry.getKey());
+                        task.id = taskJson.get("index").getAsInt();
                         task.target = taskJson.get("target").getAsString();
                         task.required = taskJson.get("required").getAsLong();
                         quest.tasks.add(task);
@@ -260,7 +260,7 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:location": {
                         BQLocationTask task = new BQLocationTask();
-                        task.id = Integer.parseInt(taskEntry.getKey());
+                        task.id = taskJson.get("index").getAsInt();
                         task.x = taskJson.get("posX").getAsInt();
                         task.y = taskJson.get("posY").getAsInt();
                         task.z = taskJson.get("posZ").getAsInt();
