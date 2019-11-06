@@ -372,8 +372,8 @@ public class CommandImport extends CommandBase {
 
         // remap old quest ids to new imported quests
 
-        Map<Integer, Integer> newQuestMap = new HashMap<>();
-        Map<Integer, Map<Integer, Integer>> questTaskMap = new HashMap<>();
+        Map<Integer, Quest> newQuestMap = new HashMap<>();
+        Map<Quest, Map<Integer, Task>> questTaskMap = new HashMap<>();
 
         for (BQChapter chapter : chapters) {
             Chapter c = new Chapter(f);
@@ -386,8 +386,8 @@ public class CommandImport extends CommandBase {
             for (BQQuest quest : chapter.quests) {
                 Quest q = new Quest(c);
                 q.id = f.newID();
-                newQuestMap.put(quest.id, q.id);
-                questTaskMap.put(q.id, new HashMap<>());
+                newQuestMap.put(quest.id, q);
+                questTaskMap.put(q, new HashMap<>());
                 c.quests.add(q);
                 q.title = quest.name;
                 q.description.addAll(Arrays.asList(quest.description));
@@ -406,7 +406,7 @@ public class CommandImport extends CommandBase {
                     t.id = f.newID();
                     q.tasks.add(t);
 
-                    questTaskMap.get(q.id).put(task.id, t.id);
+                    questTaskMap.get(q).put(task.id, t);
                 }
 
                 for (BQReward reward : quest.rewards) {
@@ -428,15 +428,15 @@ public class CommandImport extends CommandBase {
         for (BQChapter chapter : chapters) {
             for (BQQuest quest : chapter.quests) {
                 if (quest.dependencies.length > 0) {
-                    Quest q = f.getQuest(newQuestMap.get(quest.id));
+                    Quest q = newQuestMap.get(quest.id);
 
                     for (int d : quest.dependencies) {
                         BQQuest d1 = questMap.get(d);
 
                         if (d1 != null) {
-                            Quest q1 = f.getQuest(newQuestMap.get(d1.id));
+                            Quest q1 = newQuestMap.get(d1.id);
 
-                            if (q1 != null) {
+                            if (q1 != null && q != null) {
                                 q.dependencies.add(q1);
                             }
                         }
@@ -453,12 +453,12 @@ public class CommandImport extends CommandBase {
         newQuestMap.forEach((bqQuest, ftbQuest) -> {
             JsonObject questInfo = new JsonObject();
             importedQuests.add(bqQuest.toString(), questInfo);
-            questInfo.addProperty("id", ftbQuest);
+            questInfo.addProperty("id", ftbQuest.id);
 
             JsonObject taskInfo = new JsonObject();
             questInfo.add("tasks", taskInfo);
             questTaskMap.get(ftbQuest).forEach((bqTask, ftbTask) -> {
-                taskInfo.addProperty(bqTask.toString(), ftbTask);
+                taskInfo.addProperty(bqTask.toString(), ftbTask.id);
             });
         });
 
