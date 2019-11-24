@@ -101,14 +101,14 @@ public class CommandImport extends CommandBase {
         JsonElement lootJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultLoot.json")).safeJson();
 
         if (!json0.isJsonObject()) {
-            server.sendMessage(new TextComponentString("config/betterquesting/DefaultQuests.json not found!"));
+            sender.sendMessage(new TextComponentString("config/betterquesting/DefaultQuests.json not found!"));
             return;
         }
 
         JsonObject json = fix(json0).getAsJsonObject();
 
         if (!json.get("format").getAsString().startsWith("2")) {
-            server.sendMessage(new TextComponentString("Cannot import DefaultQuests.json with old version (" + json.get("format").getAsString() + ")!"));
+            sender.sendMessage(new TextComponentString("Cannot import DefaultQuests.json with old version (" + json.get("format").getAsString() + ")!"));
             return;
         }
 
@@ -479,14 +479,14 @@ public class CommandImport extends CommandBase {
 
         JsonElement partiesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestingParties.json")).safeJson();
         if (!partiesJson0.isJsonObject()) {
-            server.sendMessage(new TextComponentString("betterquesting/QuestingParties.json was not found in your save!"));
+            sender.sendMessage(new TextComponentString("betterquesting/QuestingParties.json was not found in your save!"));
             return;
         }
         JsonObject partiesJson = fix(partiesJson0).getAsJsonObject();
 
         JsonElement namesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/NameCache.json")).safeJson();
         if (!namesJson0.isJsonObject()) {
-            server.sendMessage(new TextComponentString("betterquesting/NameCache.json was not found in your save!"));
+            sender.sendMessage(new TextComponentString("betterquesting/NameCache.json was not found in your save!"));
             return;
         }
         JsonObject namesJson = fix(namesJson0).getAsJsonObject();
@@ -607,19 +607,19 @@ public class CommandImport extends CommandBase {
 
         JsonElement progressJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestProgress.json")).safeJson();
         if (!progressJson0.isJsonObject()) {
-            server.sendMessage(new TextComponentString("betterquesting/QuestProgress.json was not found in your save!"));
+            sender.sendMessage(new TextComponentString("betterquesting/QuestProgress.json was not found in your save!"));
             return;
         }
         JsonObject progressJson = fix(progressJson0).getAsJsonObject();
 
         JsonElement convertJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "imported_quests.json")).safeJson();
         if (!convertJson0.isJsonObject()) {
-            server.sendMessage(new TextComponentString("No conversion mapping was found in your config folder!"));
+            sender.sendMessage(new TextComponentString("No conversion mapping was found in your config folder!"));
             return;
         }
         JsonObject convertJson = convertJson0.getAsJsonObject();
         if (!convertJson.has("_version") || convertJson.get("_version").getAsInt() != CONVERT_FILE_VERSION) {
-            server.sendMessage(new TextComponentString("The conversion mapping found is using a different format. Please run quest importing again!"));
+            sender.sendMessage(new TextComponentString("The conversion mapping found is using a different format. Please run quest importing again!"));
             return;
         }
 
