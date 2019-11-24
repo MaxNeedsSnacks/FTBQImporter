@@ -596,7 +596,7 @@ public class CommandImport extends CommandBase {
             }
         }
 
-        /**
+        /*
          * What we have:
          *
          * A list of parties
@@ -720,6 +720,7 @@ public class CommandImport extends CommandBase {
 
     private ItemStack jsonItem(@Nullable JsonElement json0, boolean allowFilter) {
         if (json0 == null || !json0.isJsonObject()) {
+            FTBQImporter.LOGGER.debug("JSON {} is null or has incorrect format! Returning empty item stack", String.valueOf(json0));
             return ItemStack.EMPTY;
         }
 
@@ -738,6 +739,7 @@ public class CommandImport extends CommandBase {
                     ((OreDictionaryFilter) ((ItemFilter.ItemFilterData) filter).filter).setValue(ore);
                 }
 
+                FTBQImporter.LOGGER.debug("Returning ore dictionary filter with value {} for JSON {}", ore, String.valueOf(json0));
                 return oreFilter;
             } else {
                 return OreDictionary.doesOreNameExist(ore) ?
@@ -748,6 +750,7 @@ public class CommandImport extends CommandBase {
         String id = json.has("id") ? json.get("id").getAsString() : "";
 
         if (id.isEmpty() || id.equals("betterquesting:placeholder")) {
+            FTBQImporter.LOGGER.debug("Item ID {} is invalid or empty! Returning empty item stack", String.valueOf(json0));
             return ItemStack.EMPTY;
         } else if (id.equals("bq_standard:loot_chest")) {
             ItemStack stack = new ItemStack(FTBQuestsItems.LOOTCRATE);
@@ -782,7 +785,13 @@ public class CommandImport extends CommandBase {
             }
         }
 
-        return ItemMissing.read(nbt);
+        ItemStack stack = ItemMissing.read(nbt);
+        if (stack.isEmpty() || stack.isItemEqual(new ItemStack(ItemFiltersItems.MISSING))) {
+            FTBQImporter.LOGGER.debug("JSON {} returned an empty or missing item!", String.valueOf(json0));
+        } else {
+            FTBQImporter.LOGGER.debug("Found an item for JSON {}!", String.valueOf(json0));
+        }
+        return stack;
     }
 
     private Optional<Quest> getConvertedQuest(ServerQuestFile f, int id, JsonObject mapping) {
