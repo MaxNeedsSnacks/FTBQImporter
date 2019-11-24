@@ -200,11 +200,7 @@ public class CommandImport extends CommandBase {
                     case "bq_standard:retrieval": {
                         if (quest.taskLogicAnd) {
                             for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
-                                BQItemTask task = new BQItemTask();
-                                task.id = taskJson.get("index").getAsInt();
-                                task.items = new ArrayList<>();
-                                task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
-                                task.consume = taskJson.get("consume").getAsBoolean();
+                                BQItemTask task = makeItemTask(taskJson);
                                 ItemStack stack = jsonItem(taskItemEntry.getValue(), true);
 
                                 if (!stack.isEmpty()) {
@@ -213,11 +209,7 @@ public class CommandImport extends CommandBase {
                                 }
                             }
                         } else {
-                            BQItemTask task = new BQItemTask();
-                            task.id = taskJson.get("index").getAsInt();
-                            task.items = new ArrayList<>();
-                            task.ignoreNBT = taskJson.get("ignoreNBT").getAsBoolean();
-                            task.consume = taskJson.get("consume").getAsBoolean();
+                            BQItemTask task = makeItemTask(taskJson);
 
                             for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
                                 ItemStack item = jsonItem(taskItemEntry.getValue(), true);
@@ -471,6 +463,15 @@ public class CommandImport extends CommandBase {
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfully imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
         server.getPlayerList().sendMessage(new TextComponentString("Make sure to double-check everything as well, as the two mods are fundamentally different from one another."));
+    }
+
+    private BQItemTask makeItemTask(JsonObject taskJson) {
+        BQItemTask task = new BQItemTask();
+        task.id = taskJson.get("index").getAsInt();
+        task.items = new ArrayList<>();
+        task.ignoreNBT = taskJson.has("ignoreNBT") && taskJson.get("ignoreNBT").getAsBoolean();
+        task.consume = taskJson.has("consume") && taskJson.get("consume").getAsBoolean();
+        return task;
     }
 
     public void importProgress(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
