@@ -38,16 +38,16 @@ import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
 import net.minecraft.command.WrongUsageException;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.JsonToNBT;
+import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagString;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.NonNullList;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.oredict.OreDictionary;
 
-import javax.annotation.Nullable;
 import java.io.File;
 import java.util.*;
 
@@ -97,18 +97,19 @@ public class CommandImport extends CommandBase {
         boolean truncate_loot = flags.contains("-l") || flags.contains("--truncate-loot");
         boolean auto_cmd = flags.contains("-c") || flags.contains("--auto-cmd");
 
-        JsonElement json0 = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultQuests.json")).safeJson();
-        JsonElement lootJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultLoot.json")).safeJson();
+        JsonElement defaultQuestsJson = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultQuests.json")).safeJson();
+        JsonElement defaultLootJson = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultLoot.json")).safeJson();
 
-        if (!json0.isJsonObject()) {
+        if (!defaultQuestsJson.isJsonObject()) {
             sender.sendMessage(new TextComponentString("config/betterquesting/DefaultQuests.json not found!"));
             return;
         }
 
-        JsonObject json = fix(json0).getAsJsonObject();
+        NBTTagCompound defaultQuests = NBTConverter.JSONtoNBT_Object(defaultQuestsJson.getAsJsonObject(), new NBTTagCompound(), true);
 
-        if (!json.get("format").getAsString().startsWith("2")) {
-            sender.sendMessage(new TextComponentString("Cannot import DefaultQuests.json with old version (" + json.get("format").getAsString() + ")!"));
+        String ver;
+        if (!(ver = defaultQuests.getString("format")).startsWith("2")) {
+            sender.sendMessage(new TextComponentString("Cannot import DefaultQuests.json with old version (" + ver + ")!"));
             return;
         }
 
@@ -127,7 +128,9 @@ public class CommandImport extends CommandBase {
         // region loot
         RewardTable crateTable = null;
 
-        if (lootJson0.isJsonObject()) {
+        if (defaultLootJson.isJsonObject()) {
+            NBTTagCompound defaultLoot = NBTConverter.JSONtoNBT_Object(defaultLootJson.getAsJsonObject(), new NBTTagCompound(), true);
+
             crateTable = new RewardTable(f);
             crateTable.id = f.newID();
             f.rewardTables.add(crateTable);
@@ -138,25 +141,25 @@ public class CommandImport extends CommandBase {
                 crateTable.lootCrate.glow = true;
             }
 
-            for (Map.Entry<String, JsonElement> entry : fix(lootJson0).getAsJsonObject().get("groups").getAsJsonObject().entrySet()) {
-                JsonObject lootJson = entry.getValue().getAsJsonObject();
+            for (NBTBase groupBase : defaultLoot.getTagList("groups", 10)) {
+                NBTTagCompound groupNbt = (NBTTagCompound) groupBase;
 
                 RewardTable table = new RewardTable(f);
-                table.title = lootJson.get("name").getAsString();
+                table.title = groupNbt.getString("name");
                 table.id = f.newID();
                 f.rewardTables.add(table);
                 table.lootCrate = new LootCrate(table);
                 table.lootCrate.stringID = StringUtils.getID(table.title, StringUtils.FLAG_ID_DEFAULTS);
                 table.lootCrate.itemName = table.title;
 
-                crateTable.rewards.add(new WeightedReward(new ItemReward(crateTable.fakeQuest, table.lootCrate.createStack()), lootJson.get("weight").getAsInt()));
+                crateTable.rewards.add(new WeightedReward(new ItemReward(crateTable.fakeQuest, table.lootCrate.createStack()), groupNbt.getInteger("weight")));
 
-                for (Map.Entry<String, JsonElement> rewardEntry : lootJson.get("rewards").getAsJsonObject().entrySet()) {
-                    for (Map.Entry<String, JsonElement> itemEntry : rewardEntry.getValue().getAsJsonObject().get("items").getAsJsonObject().entrySet()) {
-                        ItemStack stack = jsonItem(itemEntry.getValue());
-
+                for (NBTBase rewardBase : defaultLoot.getTagList("rewards", 10)) {
+                    NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
+                    for (NBTBase rewardItem : rewardNbt.getTagList("items", 10)) {
+                        ItemStack stack = nbtItem((NBTTagCompound) rewardItem);
                         if (!stack.isEmpty()) {
-                            table.rewards.add(new WeightedReward(new ItemReward(table.fakeQuest, stack), rewardEntry.getValue().getAsJsonObject().get("weight").getAsInt()));
+                            table.rewards.add(new WeightedReward(new ItemReward(table.fakeQuest, stack), rewardNbt.getInteger("weight")));
                             break;
                         }
                     }
@@ -165,43 +168,41 @@ public class CommandImport extends CommandBase {
         }
         // endregion loot
 
-        for (Map.Entry<String, JsonElement> entry : json.get("questDatabase").getAsJsonObject().entrySet()) {
-            JsonObject questJson = entry.getValue().getAsJsonObject();
-            BQQuest quest = new BQQuest();
-            quest.id = questJson.get("questID").getAsInt();
-            questMap.put(quest.id, quest);
-            JsonArray deps = questJson.get("preRequisites").getAsJsonArray();
-            quest.dependencies = new int[deps.size()];
+        for (NBTBase questBase : defaultQuests.getTagList("questDatabase", 10)) {
+            NBTTagCompound questNbt = (NBTTagCompound) questBase;
 
-            for (int i = 0; i < quest.dependencies.length; i++) {
-                quest.dependencies[i] = deps.get(i).getAsInt();
-            }
+            BQQuest quest = new BQQuest();
+            quest.id = questNbt.getInteger("questID");
+            questMap.put(quest.id, quest);
+
+            quest.dependencies = questNbt.getIntArray("preRequisites");
 
             quest.tasks = new ArrayList<>();
             quest.rewards = new ArrayList<>();
 
-            JsonObject properties = questJson.get("properties").getAsJsonObject().get("betterquesting").getAsJsonObject();
-            quest.name = properties.get("name").getAsString().trim();
-            quest.description = properties.get("desc").getAsString().trim().split("\n");
-            quest.icon = jsonItem(properties.get("icon"));
-            quest.isSilent = properties.has("issilent") && properties.get("issilent").getAsInt() == 1;
-            quest.taskLogicAnd = properties.has("tasklogic") && properties.get("tasklogic").getAsString().equalsIgnoreCase("AND");
-            quest.repeatTime = properties.has("repeattime") ? properties.get("repeattime").getAsInt() : -1;
-            quest.teamReward = properties.has("partysinglereward") && properties.get("partysinglereward").getAsInt() == 1;
-            quest.autoClaim = properties.has("autoclaim") && properties.get("autoclaim").getAsInt() == 1;
+            NBTTagCompound properties = questNbt.getCompoundTag("properties").getCompoundTag("betterquesting");
+            quest.name = properties.getString("name").trim();
+            quest.description = properties.getString("desc").trim().split("\n");
+            quest.icon = nbtItem(properties.getCompoundTag("icon"));
+            quest.isSilent = properties.getBoolean("issilent");
+            quest.taskLogicAnd = properties.getString("tasklogic").equalsIgnoreCase("AND");
+            quest.repeatTime = properties.getInteger("repeattime");
+            quest.teamReward = properties.getBoolean("partysinglereward");
+            quest.autoClaim = properties.getBoolean("autoclaim");
 
             // region tasks
-            for (Map.Entry<String, JsonElement> taskEntry : questJson.get("tasks").getAsJsonObject().entrySet()) {
-                JsonObject taskJson = taskEntry.getValue().getAsJsonObject();
-                String type = taskJson.get("taskID").getAsString();
+            for (NBTBase taskBase : questNbt.getTagList("tasks", 10)) {
+                NBTTagCompound taskNbt = (NBTTagCompound) taskBase;
+
+                String type = taskNbt.getString("taskID");
 
                 switch (type) {
                     case "bq_standard:crafting":
                     case "bq_standard:retrieval": {
                         if (quest.taskLogicAnd) {
-                            for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
-                                BQItemTask task = makeItemTask(taskJson);
-                                ItemStack stack = jsonItem(taskItemEntry.getValue(), true);
+                            for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
+                                BQItemTask task = makeItemTask(taskNbt);
+                                ItemStack stack = nbtItem((NBTTagCompound) taskItemBase, true);
 
                                 if (!stack.isEmpty()) {
                                     task.items.add(stack);
@@ -209,10 +210,10 @@ public class CommandImport extends CommandBase {
                                 }
                             }
                         } else {
-                            BQItemTask task = makeItemTask(taskJson);
+                            BQItemTask task = makeItemTask(taskNbt);
 
-                            for (Map.Entry<String, JsonElement> taskItemEntry : taskJson.get("requiredItems").getAsJsonObject().entrySet()) {
-                                ItemStack item = jsonItem(taskItemEntry.getValue(), true);
+                            for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
+                                ItemStack item = nbtItem((NBTTagCompound) taskItemBase, true);
 
                                 if (!item.isEmpty()) {
                                     task.items.add(item);
@@ -233,31 +234,31 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:xp": {
                         BQXPTask task = new BQXPTask();
-                        task.id = taskJson.get("index").getAsInt();
-                        task.xp = taskJson.get("amount").getAsLong();
-                        task.consume = taskJson.get("consume").getAsInt() == 1;
-                        task.levels = taskJson.get("isLevels").getAsInt() == 1;
+                        task.id = taskNbt.getInteger("index");
+                        task.xp = taskNbt.getLong("amount");
+                        task.consume = taskNbt.getBoolean("consume");
+                        task.levels = taskNbt.getBoolean("isLevels");
                         quest.tasks.add(task);
                         break;
                     }
 
                     case "bq_standard:hunt": {
                         BQHuntTask task = new BQHuntTask();
-                        task.id = taskJson.get("index").getAsInt();
-                        task.target = taskJson.get("target").getAsString();
-                        task.required = taskJson.get("required").getAsLong();
+                        task.id = taskNbt.getInteger("index");
+                        task.target = taskNbt.getString("target");
+                        task.required = taskNbt.getLong("required");
                         quest.tasks.add(task);
                         break;
                     }
 
                     case "bq_standard:location": {
                         BQLocationTask task = new BQLocationTask();
-                        task.id = taskJson.get("index").getAsInt();
-                        task.x = taskJson.get("posX").getAsInt();
-                        task.y = taskJson.get("posY").getAsInt();
-                        task.z = taskJson.get("posZ").getAsInt();
-                        task.dimension = taskJson.get("dimension").getAsInt();
-                        task.range = taskJson.get("range").getAsInt();
+                        task.id = taskNbt.getInteger("index");
+                        task.x = taskNbt.getInteger("posX");
+                        task.y = taskNbt.getInteger("posY");
+                        task.z = taskNbt.getInteger("posZ");
+                        task.dimension = taskNbt.getInteger("dimension");
+                        task.range = taskNbt.getInteger("range");
                         quest.tasks.add(task);
                         break;
                     }
@@ -270,15 +271,16 @@ public class CommandImport extends CommandBase {
             // endregion tasks
 
             // region rewards
-            for (Map.Entry<String, JsonElement> rewardEntry : questJson.get("rewards").getAsJsonObject().entrySet()) {
-                JsonObject rewardJson = rewardEntry.getValue().getAsJsonObject();
-                String type = rewardJson.get("rewardID").getAsString();
+            for (NBTBase rewardBase : questNbt.getTagList("rewards", 10)) {
+                NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
+                String type = rewardNbt.getString("rewardID");
 
                 switch (type) {
                     case "bq_standard:item": {
-                        for (Map.Entry<String, JsonElement> itemRewardEntry : rewardJson.get("rewards").getAsJsonObject().entrySet()) {
+                        for (NBTBase rewardItem : rewardNbt.getTagList("rewards", 10)) {
+
                             BQItemReward reward = new BQItemReward();
-                            reward.item = jsonItem(itemRewardEntry.getValue());
+                            reward.item = nbtItem((NBTTagCompound) rewardItem);
 
                             ItemStack loot_chest = new ItemStack(FTBQuestsItems.LOOTCRATE);
                             loot_chest.setTagInfo("type", new NBTTagString("loot_chest"));
@@ -299,9 +301,8 @@ public class CommandImport extends CommandBase {
                         BQChoiceReward reward = new BQChoiceReward();
                         reward.items = new ArrayList<>();
 
-                        for (Map.Entry<String, JsonElement> itemRewardEntry : rewardJson.get("choices").getAsJsonObject().entrySet()) {
-                            ItemStack stack = jsonItem(itemRewardEntry.getValue());
-
+                        for (NBTBase rewardItem : rewardNbt.getTagList("choices", 10)) {
+                            ItemStack stack = nbtItem((NBTTagCompound) rewardItem);
                             if (!stack.isEmpty()) {
                                 reward.items.add(stack);
                             }
@@ -316,16 +317,16 @@ public class CommandImport extends CommandBase {
 
                     case "bq_standard:xp": {
                         BQXPReward reward = new BQXPReward();
-                        reward.levels = rewardJson.get("isLevels").getAsInt() == 1;
-                        reward.xp = rewardJson.get("amount").getAsInt();
+                        reward.levels = rewardNbt.getBoolean("isLevels");
+                        reward.xp = rewardNbt.getInteger("amount");
                         quest.rewards.add(reward);
                         break;
                     }
 
                     case "bq_standard:command": {
                         BQCommandReward reward = new BQCommandReward();
-                        reward.command = rewardJson.get("command").getAsString().replace("VAR_NAME", "@p");
-                        reward.player = rewardJson.get("viaPlayer").getAsInt() == 1;
+                        reward.command = rewardNbt.getString("command").replace("VAR_NAME", "@p");
+                        reward.player = rewardNbt.getBoolean("viaPlayer");
                         quest.rewards.add(reward);
                         break;
                     }
@@ -338,25 +339,25 @@ public class CommandImport extends CommandBase {
             // endregion rewards
         }
 
-        for (Map.Entry<String, JsonElement> entry : json.get("questLines").getAsJsonObject().entrySet()) {
-            JsonObject chapterJson = entry.getValue().getAsJsonObject();
-            JsonObject properties = chapterJson.get("properties").getAsJsonObject().get("betterquesting").getAsJsonObject();
+        for (NBTBase chapterBase : defaultQuests.getTagList("questLines", 10)) {
+            NBTTagCompound chapterNbt = (NBTTagCompound) chapterBase;
+            NBTTagCompound properties = chapterNbt.getCompoundTag("properties").getCompoundTag("betterquesting");
 
             BQChapter chapter = new BQChapter();
             chapters.add(chapter);
-            chapter.name = properties.get("name").getAsString().trim();
-            chapter.desc = properties.get("desc").getAsString().trim().split("\n");
-            chapter.icon = jsonItem(properties.get("icon"));
+            chapter.name = properties.getString("name").trim();
+            chapter.desc = properties.getString("desc").trim().split("\n");
+            chapter.icon = nbtItem(properties.getCompoundTag("icon"));
             chapter.quests = new ArrayList<>();
 
-            for (Map.Entry<String, JsonElement> questEntry : chapterJson.get("quests").getAsJsonObject().entrySet()) {
-                JsonObject questJson = questEntry.getValue().getAsJsonObject();
-                BQQuest quest = questMap.get(questJson.get("id").getAsInt());
+            for (NBTBase questBase : chapterNbt.getTagList("quests", 10)) {
+                NBTTagCompound questNbt = (NBTTagCompound) questBase;
+                BQQuest quest = questMap.get(questNbt.getInteger("id"));
 
                 if (quest != null) {
-                    quest.x = questJson.get("x").getAsDouble() / 24D;
-                    quest.y = questJson.get("y").getAsDouble() / 24D;
-                    quest.size = Math.min(questJson.get("sizeX").getAsDouble() / 24D, questJson.get("sizeY").getAsDouble() / 24D);
+                    quest.x = questNbt.getDouble("x") / 24D;
+                    quest.y = questNbt.getDouble("y") / 24D;
+                    quest.size = Math.min(questNbt.getDouble("sizeX") / 24D, questNbt.getDouble("sizeY") / 24D);
                     chapter.quests.add(quest);
                 }
             }
@@ -387,7 +388,7 @@ public class CommandImport extends CommandBase {
                 q.x = quest.x;
                 q.y = quest.y;
                 q.size = quest.size;
-                q.canRepeat = quest.repeatTime != -1;
+                q.canRepeat = quest.repeatTime > 0;
 
                 if (quest.isSilent) {
                     q.disableToast = true;
@@ -441,6 +442,7 @@ public class CommandImport extends CommandBase {
         f.save();
         f.saveNow();
 
+        // TODO: save as NBT instead of JSON
         JsonObject importedQuests = new JsonObject();
         newQuestMap.forEach((bqQuest, ftbQuest) -> {
             JsonObject questInfo = new JsonObject();
@@ -465,12 +467,12 @@ public class CommandImport extends CommandBase {
         server.getPlayerList().sendMessage(new TextComponentString("Make sure to double-check everything as well, as the two mods are fundamentally different from one another."));
     }
 
-    private BQItemTask makeItemTask(JsonObject taskJson) {
+    private BQItemTask makeItemTask(NBTTagCompound nbt) {
         BQItemTask task = new BQItemTask();
-        task.id = taskJson.get("index").getAsInt();
+        task.id = nbt.getInteger("index");
         task.items = new ArrayList<>();
-        task.ignoreNBT = taskJson.has("ignoreNBT") && taskJson.get("ignoreNBT").getAsBoolean();
-        task.consume = taskJson.has("consume") && taskJson.get("consume").getAsBoolean();
+        task.ignoreNBT = nbt.getBoolean("ignoreNBT");
+        task.consume = nbt.getBoolean("consume");
         return task;
     }
 
@@ -478,55 +480,49 @@ public class CommandImport extends CommandBase {
         final Universe u = Universe.get();
         final int CONVERT_FILE_VERSION = 1;
 
-        JsonElement partiesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestingParties.json")).safeJson();
-        if (!partiesJson0.isJsonObject()) {
+        JsonElement questingPartiesJson = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestingParties.json")).safeJson();
+        if (!questingPartiesJson.isJsonObject()) {
             sender.sendMessage(new TextComponentString("betterquesting/QuestingParties.json was not found in your save!"));
             return;
         }
-        JsonObject partiesJson = fix(partiesJson0).getAsJsonObject();
+        NBTTagCompound questingParties = NBTConverter.JSONtoNBT_Object(questingPartiesJson.getAsJsonObject(), new NBTTagCompound(), true);
 
-        JsonElement namesJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/NameCache.json")).safeJson();
-        if (!namesJson0.isJsonObject()) {
+        JsonElement nameCacheJson = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/NameCache.json")).safeJson();
+        if (!nameCacheJson.isJsonObject()) {
             sender.sendMessage(new TextComponentString("betterquesting/NameCache.json was not found in your save!"));
             return;
         }
-        JsonObject namesJson = fix(namesJson0).getAsJsonObject();
+        NBTTagCompound nameCache = NBTConverter.JSONtoNBT_Object(nameCacheJson.getAsJsonObject(), new NBTTagCompound(), true);
 
         List<BQParty> parties = new ArrayList<>();
-        List<BQParty> dummies = new ArrayList<>();
 
         // build a list of solo players, starting with all players known to BQ
         Collection<ForgePlayer> soloPlayers = new HashSet<>();
-        for (Map.Entry<String, JsonElement> entry : namesJson.get("nameCache").getAsJsonObject().entrySet()) {
-            ForgePlayer p = u.getPlayer(entry.getValue().getAsJsonObject().get("uuid").getAsString());
+        for (NBTBase nameBase : nameCache.getTagList("nameCache", 10)) {
+            ForgePlayer p = u.getPlayer(((NBTTagCompound) nameBase).getString("uuid"));
             if (p != null) soloPlayers.add(p);
         }
 
         // Build a List of all BQ Parties
-        for (Map.Entry<String, JsonElement> entry : partiesJson.get("parties").getAsJsonObject().entrySet()) {
-            JsonObject partyJson = entry.getValue().getAsJsonObject();
-            JsonObject properties = partyJson.get("properties").getAsJsonObject().get("betterquesting").getAsJsonObject();
+        for (NBTBase partyBase : questingParties.getTagList("parties", 10)) {
+            NBTTagCompound partyNbt = (NBTTagCompound) partyBase;
 
             BQParty party = new BQParty();
-            party.id = partyJson.get("partyID").getAsInt();
-            party.name = partyJson.get("properties").getAsJsonObject()
-                    .get("betterquesting").getAsJsonObject()
-                    .get("name").getAsString().trim();
+            party.id = partyNbt.getInteger("partyID");
+            party.name = partyNbt.getCompoundTag("properties").getCompoundTag("betterquesting").getString("name").trim();
             party.members = new ArrayList<>();
 
-            for (Map.Entry<String, JsonElement> memberEntry : partyJson.get("members").getAsJsonObject().entrySet()) {
-                JsonObject memberJson = memberEntry.getValue().getAsJsonObject();
-                if (memberJson.has("uuid") && memberJson.has("status")) {
-                    String uuid = memberJson.get("uuid").getAsString();
-                    String status = memberJson.get("status").getAsString();
+            for (NBTBase memberBase : partyNbt.getTagList("members", 10)) {
+                NBTTagCompound memberNbt = (NBTTagCompound) memberBase;
+                String uuid = memberNbt.getString("uuid");
+                String status = memberNbt.getString("status");
 
-                    ForgePlayer p = u.getPlayer(uuid);
+                ForgePlayer p = u.getPlayer(uuid);
 
-                    if (p == null || status.equals("INVITE")) continue;
-                    if (status.equals("OWNER")) party.owner = p;
-                    party.members.add(p);
-                    soloPlayers.remove(p);
-                }
+                if (p == null || status.equals("INVITE")) continue;
+                if (status.equals("OWNER")) party.owner = p;
+                party.members.add(p);
+                soloPlayers.remove(p);
             }
 
             parties.add(party);
@@ -540,7 +536,6 @@ public class CommandImport extends CommandBase {
             dummy.name = p.getName();
             dummy.members = new ArrayList<>();
             dummy.members.add(p);
-            dummies.add(dummy);
             parties.add(dummy);
         }
 
@@ -606,13 +601,14 @@ public class CommandImport extends CommandBase {
          * A map telling us where player progress needs to go
          */
 
-        JsonElement progressJson0 = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestProgress.json")).safeJson();
-        if (!progressJson0.isJsonObject()) {
+        JsonElement questProgressJson = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestProgress.json")).safeJson();
+        if (!questProgressJson.isJsonObject()) {
             sender.sendMessage(new TextComponentString("betterquesting/QuestProgress.json was not found in your save!"));
             return;
         }
-        JsonObject progressJson = fix(progressJson0).getAsJsonObject();
+        NBTTagCompound questProgress = NBTConverter.JSONtoNBT_Object(questProgressJson.getAsJsonObject(), new NBTTagCompound(), true);
 
+        // FIXME: Don't load JSON, instead use NBT for consistency purposes
         JsonElement convertJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "imported_quests.json")).safeJson();
         if (!convertJson0.isJsonObject()) {
             sender.sendMessage(new TextComponentString("No conversion mapping was found in your config folder!"));
@@ -626,42 +622,37 @@ public class CommandImport extends CommandBase {
 
         Collection<BQQuestData> oldProgressData = new HashSet<>();
 
-        for (Map.Entry<String, JsonElement> questProgressEntry : progressJson.get("questProgress").getAsJsonObject().entrySet()) {
-            JsonObject dataJson = questProgressEntry.getValue().getAsJsonObject();
+        for (NBTBase questProgressBase : questProgress.getTagList("questProgress", 10)) {
+            NBTTagCompound questProgressNbt = (NBTTagCompound) questProgressBase;
 
             BQQuestData questData = new BQQuestData();
-            questData.id = dataJson.get("questID").getAsInt();
+            questData.id = questProgressNbt.getInteger("questID");
             questData.completed = new HashMap<>();
-            if (dataJson.has("completed")) {
-                for (Map.Entry<String, JsonElement> completedEntry : dataJson.get("completed").getAsJsonObject().entrySet()) {
-                    JsonObject completedJson = completedEntry.getValue().getAsJsonObject();
+            for (NBTBase completedBase : questProgressNbt.getTagList("completed", 10)) {
+                NBTTagCompound completedNbt = (NBTTagCompound) completedBase;
 
-                    String uuid = completedJson.get("uuid").getAsString();
-                    int claimed = completedJson.has("claimed") ? completedJson.get("claimed").getAsInt() : 0;
+                String uuid = completedNbt.getString("uuid");
 
-                    ForgePlayer p = u.getPlayer(uuid);
+                ForgePlayer p = u.getPlayer(uuid);
 
-                    if (p == null) continue;
-                    questData.completed.put(p, claimed != 0);
-                }
+                if (p == null) continue;
+                questData.completed.put(p, completedNbt.getBoolean("claimed"));
             }
 
             questData.tasks = new ArrayList<>();
-            if (dataJson.has("tasks")) {
-                for (Map.Entry<String, JsonElement> taskDataEntry : dataJson.get("tasks").getAsJsonObject().entrySet()) {
-                    JsonObject taskDataJson = taskDataEntry.getValue().getAsJsonObject();
+            for (NBTBase taskDataBase : questProgressNbt.getTagList("tasks", 10)) {
+                NBTTagCompound taskDataNbt = (NBTTagCompound) taskDataBase;
 
-                    BQTaskData taskData = new BQTaskData();
-                    taskData.id = taskDataJson.get("index").getAsInt();
-                    taskData.completeUsers = new ArrayList<>();
-                    for (Map.Entry<String, JsonElement> completeUserEntry : taskDataJson.get("completeUsers").getAsJsonObject().entrySet()) {
-                        ForgePlayer p = u.getPlayer(completeUserEntry.getValue().getAsString());
+                BQTaskData taskData = new BQTaskData();
+                taskData.id = taskDataNbt.getInteger("index");
+                taskData.completeUsers = new ArrayList<>();
+                for (NBTBase completeUser : taskDataNbt.getTagList("completeUsers", 8)) {
+                    ForgePlayer p = u.getPlayer(((NBTTagString) completeUser).getString());
 
-                        if (p == null) continue;
-                        taskData.completeUsers.add(p);
-                    }
-                    questData.tasks.add(taskData);
+                    if (p == null) continue;
+                    taskData.completeUsers.add(p);
                 }
+                questData.tasks.add(taskData);
             }
 
             oldProgressData.add(questData);
@@ -715,84 +706,74 @@ public class CommandImport extends CommandBase {
         server.getPlayerList().sendMessage(new TextComponentString("Players, please note that you may be required to join your former party owner's team in order to get your progress back!"));
     }
 
-    private ItemStack jsonItem(@Nullable JsonElement json0) {
-        return jsonItem(json0, false);
+    private ItemStack nbtItem(NBTTagCompound itemNbt) {
+        return nbtItem(itemNbt, false);
     }
 
-    private ItemStack jsonItem(@Nullable JsonElement json0, boolean allowFilter) {
-        if (json0 == null || !json0.isJsonObject()) {
-            FTBQImporter.LOGGER.debug("JSON {} is null or has incorrect format! Returning empty item stack", String.valueOf(json0));
-            return ItemStack.EMPTY;
+    private ItemStack nbtItem(NBTTagCompound itemNbt, boolean isFilter) {
+
+        ItemStack stack = ItemStack.EMPTY;
+
+        if (itemNbt.isEmpty()) {
+            FTBQImporter.LOGGER.debug("Item Task {} has incorrect format! Returning empty item stack", itemNbt);
+            return stack;
         }
 
-        JsonObject json = json0.getAsJsonObject();
-
-        if (json.has("OreDict") && !json.get("OreDict").getAsString().isEmpty()) {
-
-            String ore = json.get("OreDict").getAsString();
-
-            if (allowFilter) {
-                ItemStack oreFilter = new ItemStack(ItemFiltersItems.FILTER);
-                IItemFilter filter = ItemFiltersAPI.getFilter(oreFilter);
-
-                if (filter instanceof ItemFilter.ItemFilterData) {
-                    ((ItemFilter.ItemFilterData) filter).filter = new OreDictionaryFilter();
-                    ((OreDictionaryFilter) ((ItemFilter.ItemFilterData) filter).filter).setValue(ore);
-                }
-
-                FTBQImporter.LOGGER.debug("Returning ore dictionary filter with value {} for JSON {}", ore, String.valueOf(json0));
-                return oreFilter;
-            } else {
-                return OreDictionary.doesOreNameExist(ore) ?
-                        OreDictionary.getOres(ore).get(0) : ItemStack.EMPTY;
-            }
+        String ore = itemNbt.getString("OreDict");
+        if (!ore.isEmpty()) {
+            stack = oreDictItem(ore, isFilter);
         }
+        itemNbt.removeTag("OreDict");
 
-        String id = json.has("id") ? json.get("id").getAsString() : "";
+        if (!stack.isEmpty()) return stack;
+
+        String id = itemNbt.getString("id");
 
         if (id.isEmpty() || id.equals("betterquesting:placeholder")) {
-            FTBQImporter.LOGGER.debug("Item ID {} is invalid or empty! Returning empty item stack", String.valueOf(json0));
-            return ItemStack.EMPTY;
+            FTBQImporter.LOGGER.debug("Item ID {} is invalid or empty! Returning empty item stack", id);
+            return stack;
         } else if (id.equals("bq_standard:loot_chest")) {
-            ItemStack stack = new ItemStack(FTBQuestsItems.LOOTCRATE);
+            stack = new ItemStack(FTBQuestsItems.LOOTCRATE);
             stack.setTagInfo("type", new NBTTagString("loot_chest"));
             return stack;
         }
 
-        NBTTagCompound nbt = new NBTTagCompound();
-        nbt.setString("id", json.get("id").getAsString());
-        nbt.setInteger("Count", json.get("Count").getAsInt());
-        nbt.setInteger("Damage", json.get("Damage").getAsInt());
-
-        if (json.has("tag")) {
-            try {
-                NBTTagCompound nbt1 = JsonToNBT.getTagFromJson(json.get("tag").toString());
-
-                if (nbt1 != null) {
-                    nbt.setTag("tag", nbt1);
-                }
-            } catch (Exception ex) {
-            }
-        }
-
-        if (json.has("ForgeCaps")) {
-            try {
-                NBTTagCompound nbt1 = JsonToNBT.getTagFromJson(json.get("ForgeCaps").toString());
-
-                if (nbt1 != null) {
-                    nbt.setTag("ForgeCaps", nbt1);
-                }
-            } catch (Exception ex) {
-            }
-        }
-
-        ItemStack stack = ItemMissing.read(nbt);
+        stack = ItemMissing.read(itemNbt);
         if (stack.isEmpty() || stack.isItemEqual(new ItemStack(ItemFiltersItems.MISSING))) {
-            FTBQImporter.LOGGER.debug("JSON {} returned an empty or missing item!", String.valueOf(json0));
+            FTBQImporter.LOGGER.debug("{} returned an empty or missing item!", itemNbt);
         } else {
-            FTBQImporter.LOGGER.debug("Found an item for JSON {}!", String.valueOf(json0));
+            FTBQImporter.LOGGER.debug("Found an item with properties {}!", itemNbt);
         }
         return stack;
+
+    }
+
+    private ItemStack oreDictItem(String ore, boolean isFilter) {
+        if (isFilter) {
+            ItemStack oreFilter = new ItemStack(ItemFiltersItems.FILTER);
+            IItemFilter filter = ItemFiltersAPI.getFilter(oreFilter);
+
+            if (filter instanceof ItemFilter.ItemFilterData) {
+                ItemFilter.ItemFilterData data = (ItemFilter.ItemFilterData) filter;
+                OreDictionaryFilter odFilter = new OreDictionaryFilter();
+                odFilter.setValue(ore);
+                data.filter = odFilter;
+
+                List<ItemStack> valid_items = NonNullList.create();
+                filter.getValidItems(valid_items);
+                if (valid_items.isEmpty()) {
+                    FTBQImporter.LOGGER.debug("Warning: Did not create Ore Dictionary filter with value {} as it is empty!", ore);
+                    return ItemStack.EMPTY;
+                }
+
+                FTBQImporter.LOGGER.debug("Successfully created ore dictionary filter with value {}", ore);
+                return oreFilter;
+            }
+
+            return ItemStack.EMPTY;
+        } else {
+            return (OreDictionary.doesOreNameExist(ore) ? OreDictionary.getOres(ore).get(0) : ItemStack.EMPTY);
+        }
     }
 
     private Optional<Quest> getConvertedQuest(ServerQuestFile f, int id, JsonObject mapping) {
@@ -824,6 +805,7 @@ public class CommandImport extends CommandBase {
             JsonObject o = new JsonObject();
 
             for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject().entrySet()) {
+                // FIXME: Stop using Entry Sets
                 String s = entry.getKey();
                 int i = s.lastIndexOf(':');
 
