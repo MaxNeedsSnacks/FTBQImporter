@@ -10,7 +10,7 @@ import com.feed_the_beast.ftblib.lib.data.TeamType;
 import com.feed_the_beast.ftblib.lib.data.Universe;
 import com.feed_the_beast.ftblib.lib.io.DataReader;
 import com.feed_the_beast.ftblib.lib.util.FileUtils;
-import com.feed_the_beast.ftblib.lib.util.JsonUtils;
+import com.feed_the_beast.ftblib.lib.util.NBTUtils;
 import com.feed_the_beast.ftblib.lib.util.StringUtils;
 import com.feed_the_beast.ftbquests.item.FTBQuestsItems;
 import com.feed_the_beast.ftbquests.quest.ChangeProgress;
@@ -55,6 +55,8 @@ import java.util.*;
  * @author LatvianModder, MaxNeedsSnacks
  */
 public class CommandImport extends CommandBase {
+
+    private final int CONVERT_FILE_VERSION = 2;
 
     @Override
     public String getName() {
@@ -442,25 +444,21 @@ public class CommandImport extends CommandBase {
         f.save();
         f.saveNow();
 
-        // TODO: save as NBT instead of JSON
-        JsonObject importedQuests = new JsonObject();
+        NBTTagCompound importedQuests = new NBTTagCompound();
         newQuestMap.forEach((bqQuest, ftbQuest) -> {
-            JsonObject questInfo = new JsonObject();
-            importedQuests.add(bqQuest.toString(), questInfo);
-            questInfo.addProperty("id", ftbQuest.id);
+            NBTTagCompound questInfo = new NBTTagCompound();
+            importedQuests.setTag(bqQuest.toString(), questInfo);
+            questInfo.setInteger("id", ftbQuest.id);
 
-            JsonObject taskInfo = new JsonObject();
-            questInfo.add("tasks", taskInfo);
-            questTaskMap.get(ftbQuest).forEach((bqTask, ftbTask) -> {
-                taskInfo.addProperty(bqTask.toString(), ftbTask.id);
-            });
+            NBTTagCompound taskInfo = new NBTTagCompound();
+            questInfo.setTag("tasks", taskInfo);
+            questTaskMap.get(ftbQuest).forEach((bqTask, ftbTask) -> taskInfo.setInteger(bqTask.toString(), ftbTask.id));
         });
 
-        JsonObject toExport = new JsonObject();
-        toExport.addProperty("_version", 1);
-        toExport.add("data", importedQuests);
-
-        JsonUtils.toJsonSafe(new File(Loader.instance().getConfigDir(), "imported_quests.json"), toExport);
+        NBTTagCompound exportedData = new NBTTagCompound();
+        exportedData.setInteger("_version", CONVERT_FILE_VERSION);
+        exportedData.setTag("data", importedQuests);
+        NBTUtils.writeNBTSafe(new File(Loader.instance().getConfigDir(), "imported_quests.nbt"), exportedData);
 
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfully imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
@@ -478,7 +476,6 @@ public class CommandImport extends CommandBase {
 
     public void importProgress(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
         final Universe u = Universe.get();
-        final int CONVERT_FILE_VERSION = 1;
 
         JsonElement questingPartiesJson = DataReader.get(new File(u.getWorldDirectory(), "betterquesting/QuestingParties.json")).safeJson();
         if (!questingPartiesJson.isJsonObject()) {
@@ -609,16 +606,19 @@ public class CommandImport extends CommandBase {
         NBTTagCompound questProgress = NBTConverter.JSONtoNBT_Object(questProgressJson.getAsJsonObject(), new NBTTagCompound(), true);
 
         // FIXME: Don't load JSON, instead use NBT for consistency purposes
-        JsonElement convertJson0 = DataReader.get(new File(Loader.instance().getConfigDir(), "imported_quests.json")).safeJson();
-        if (!convertJson0.isJsonObject()) {
-            sender.sendMessage(new TextComponentString("No conversion mapping was found in your config folder!"));
+        NBTTagCompound conversionMapping = NBTUtils.readNBT(new File(Loader.instance().getConfigDir(), "imported_quests.nbt"));
+
+        if (conversionMapping == null) {
+            sender.sendMessage(new TextComponentString("No valid conversion mapping was found in your config folder!"));
             return;
         }
-        JsonObject convertJson = convertJson0.getAsJsonObject();
-        if (!convertJson.has("_version") || convertJson.get("_version").getAsInt() != CONVERT_FILE_VERSION) {
+
+        if (conversionMapping.getInteger("_version") != CONVERT_FILE_VERSION) {
             sender.sendMessage(new TextComponentString("The conversion mapping found is using a different format. Please run quest importing again!"));
             return;
         }
+
+        NBTTagCompound conversionData = conversionMapping.getCompoundTag("data");
 
         Collection<BQQuestData> oldProgressData = new HashSet<>();
 
@@ -661,7 +661,7 @@ public class CommandImport extends CommandBase {
         ServerQuestFile f = ServerQuestFile.INSTANCE;
 
         oldProgressData.forEach(questData -> {
-            getConvertedQuest(f, questData.id, convertJson.get("data").getAsJsonObject()).ifPresent(quest -> {
+            getConvertedQuest(f, questData.id, conversionData).ifPresent(quest -> {
                 Collection<ForgeTeam> processed = new HashSet<>();
 
                 questData.completed.forEach((forgePlayer, claimed) -> {
@@ -682,7 +682,7 @@ public class CommandImport extends CommandBase {
                 });
 
                 questData.tasks.forEach(taskData -> {
-                    getConvertedTask(f, questData.id, taskData.id, convertJson.get("data").getAsJsonObject()).ifPresent(task -> {
+                    getConvertedTask(f, questData.id, taskData.id, conversionData).ifPresent(task -> {
                         Collection<ForgeTeam> processedTask = new HashSet<>();
 
                         taskData.completeUsers.forEach(forgePlayer -> {
@@ -776,28 +776,19 @@ public class CommandImport extends CommandBase {
         }
     }
 
-    private Optional<Quest> getConvertedQuest(ServerQuestFile f, int id, JsonObject mapping) {
-
-        if (!mapping.has(Integer.toString(id))) return Optional.empty();
-
-        JsonObject mappedJson = mapping.get(Integer.toString(id)).getAsJsonObject();
-        int mappedID = mappedJson.get("id").getAsInt();
-
-        return Optional.ofNullable(f.getQuest(mappedID));
+    private Optional<Quest> getConvertedQuest(ServerQuestFile f, int qid, NBTTagCompound mapping) {
+        return Optional.ofNullable(f.getQuest(
+                mapping.getCompoundTag(Integer.toString(qid))
+                        .getInteger("id")
+        ));
     }
 
-    private Optional<Task> getConvertedTask(ServerQuestFile f, int qid, int tid, JsonObject mapping) {
-
-        if (!mapping.has(Integer.toString(qid))) return Optional.empty();
-
-        JsonObject mappedJson = mapping.get(Integer.toString(qid)).getAsJsonObject();
-        JsonObject mappedTasks = mappedJson.get("tasks").getAsJsonObject();
-
-        if (!mappedTasks.has(Integer.toString(tid))) return Optional.empty();
-
-        int mappedID = mappedTasks.get(Integer.toString(tid)).getAsInt();
-
-        return Optional.ofNullable(f.getTask(mappedID));
+    private Optional<Task> getConvertedTask(ServerQuestFile f, int qid, int tid, NBTTagCompound mapping) {
+        return Optional.ofNullable(f.getTask(
+                mapping.getCompoundTag(Integer.toString(qid))
+                        .getCompoundTag("tasks")
+                        .getInteger(Integer.toString(tid))
+        ));
     }
 
     private JsonElement fix(JsonElement json) {
