@@ -23,9 +23,7 @@ import com.feed_the_beast.ftbquests.quest.loot.WeightedReward;
 import com.feed_the_beast.ftbquests.quest.reward.*;
 import com.feed_the_beast.ftbquests.quest.task.*;
 import com.feed_the_beast.ftbquests.util.ServerQuestData;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.latmod.mods.itemfilters.api.IItemFilter;
 import com.latmod.mods.itemfilters.api.ItemFiltersAPI;
 import com.latmod.mods.itemfilters.filters.NBTMatchingMode;
@@ -789,36 +787,6 @@ public class CommandImport extends CommandBase {
                         .getCompoundTag("tasks")
                         .getInteger(Integer.toString(tid))
         ));
-    }
-
-    private JsonElement fix(JsonElement json) {
-        if (json instanceof JsonObject) {
-            JsonObject o = new JsonObject();
-
-            for (Map.Entry<String, JsonElement> entry : json.getAsJsonObject().entrySet()) {
-                // FIXME: Stop using Entry Sets
-                String s = entry.getKey();
-                int i = s.lastIndexOf(':');
-
-                if (i != -1) {
-                    s = s.substring(0, i);
-                }
-
-                o.add(s, fix(entry.getValue()));
-            }
-
-            return o;
-        } else if (json instanceof JsonArray) {
-            JsonArray a = new JsonArray();
-
-            for (JsonElement e : json.getAsJsonArray()) {
-                a.add(fix(e));
-            }
-
-            return a;
-        }
-
-        return json;
     }
 
     // Progress-Related Stuff //
