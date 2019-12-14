@@ -124,6 +124,7 @@ public class CommandImport extends CommandBase {
         FileUtils.deleteSafe(new File(f.universe.getWorldDirectory(), "data/ftb_lib/teams/ftbquests"));
 
         Map<Integer, BQQuest> questMap = new HashMap<>();
+        Set<BQQuest> mappedQuests = new HashSet<>();
         List<BQChapter> chapters = new ArrayList<>();
 
         // region loot
@@ -362,14 +363,29 @@ public class CommandImport extends CommandBase {
                 NBTTagCompound questNbt = (NBTTagCompound) questBase;
                 BQQuest quest = questMap.get(questNbt.getInteger("id"));
 
-                if (quest != null) {
-                    quest.size = MathHelper.clamp(Math.max(questNbt.getDouble("size"), Math.min(questNbt.getDouble("sizeX"), questNbt.getDouble("sizeY"))) / 24D, 0.5, 30);
-                    quest.x = (questNbt.getDouble("x") / 24D) + (quest.size / 2D);
-                    quest.y = (questNbt.getDouble("y") / 24D) + (quest.size / 2D);
+                if (quest != null && !mappedQuests.contains(quest)) {
+                    double sizeX = MathHelper.clamp(Math.max(questNbt.getDouble("size"), questNbt.getDouble("sizeX")) / 24D, 0.5, 3);
+                    double sizeY = MathHelper.clamp(Math.max(questNbt.getDouble("size"), questNbt.getDouble("sizeY")) / 24D, 0.5, 3);
+                    quest.size = Math.min(sizeX, sizeY);
+                    quest.x = (questNbt.getDouble("x") / 24D) + (sizeX / 2D);
+                    quest.y = (questNbt.getDouble("y") / 24D) + (sizeY / 2D);
                     chapter.quests.add(quest);
+                    mappedQuests.add(quest);
                 }
             }
         }
+
+        // add orphan quests
+        BQChapter orphanChapter = new BQChapter();
+        chapters.add(orphanChapter);
+        orphanChapter.name = "Internal";
+        orphanChapter.desc = new String[]{
+                "This chapter contains internal or \"orphaned\" quests,",
+                "which are quests in Better Questing that do not have a chapter associated with them"
+        };
+        orphanChapter.icon = f.icon;
+        orphanChapter.quests = new ArrayList<>(questMap.values());
+        orphanChapter.quests.removeAll(mappedQuests);
 
         // remap old quest ids to new imported quests
 
