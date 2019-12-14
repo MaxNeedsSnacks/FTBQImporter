@@ -55,7 +55,7 @@ import java.util.*;
  */
 public class CommandImport extends CommandBase {
 
-    private final int CONVERT_FILE_VERSION = 2;
+    private final int CONVERT_FILE_VERSION = 3;
 
     @Override
     public String getName() {
@@ -201,32 +201,21 @@ public class CommandImport extends CommandBase {
                 switch (type) {
                     case "bq_standard:crafting":
                     case "bq_standard:retrieval": {
-                        if (quest.taskLogicAnd) {
-                            for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
-                                BQItemTask task = makeItemTask(taskNbt);
-                                ItemStack stack = nbtItem((NBTTagCompound) taskItemBase, true);
+                        BQItemTask task = quest.taskLogicAnd ? new BQItemAndTask() : new BQItemOrTask();
+                        task.id = taskNbt.getInteger("index");
+                        task.items = new ArrayList<>();
+                        task.ignoreNBT = taskNbt.getBoolean("ignoreNBT");
+                        task.consume = taskNbt.getBoolean("consume");
 
-                                if (!stack.isEmpty()) {
-                                    task.items.add(stack);
-                                    quest.tasks.add(task);
-                                }
-                            }
-                        } else {
-                            BQItemTask task = makeItemTask(taskNbt);
-
-                            for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
-                                ItemStack item = nbtItem((NBTTagCompound) taskItemBase, true);
-
-                                if (!item.isEmpty()) {
-                                    task.items.add(item);
-                                }
-                            }
-
-                            if (!task.items.isEmpty()) {
-                                quest.tasks.add(task);
+                        for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
+                            ItemStack item = nbtItem((NBTTagCompound) taskItemBase, true);
+                            if (!item.isEmpty()) {
+                                task.items.add(item);
                             }
                         }
-
+                        if (!task.items.isEmpty()) {
+                            quest.tasks.add(task);
+                        }
                         break;
                     }
 
@@ -489,15 +478,6 @@ public class CommandImport extends CommandBase {
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfully imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
         server.getPlayerList().sendMessage(new TextComponentString("Make sure to double-check everything as well, as the two mods are fundamentally different from one another."));
-    }
-
-    private BQItemTask makeItemTask(NBTTagCompound nbt) {
-        BQItemTask task = new BQItemTask();
-        task.id = nbt.getInteger("index");
-        task.items = new ArrayList<>();
-        task.ignoreNBT = nbt.getBoolean("ignoreNBT");
-        task.consume = nbt.getBoolean("consume");
-        return task;
     }
 
     public void importProgress(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
@@ -884,11 +864,28 @@ public class CommandImport extends CommandBase {
         abstract Task[] create(Quest quest);
     }
 
-    private static class BQItemTask extends BQTask {
+    private static abstract class BQItemTask extends BQTask {
         List<ItemStack> items;
         boolean ignoreNBT;
         boolean consume;
+    }
 
+    private static class BQItemAndTask extends BQItemTask {
+        @Override
+        Task[] create(Quest quest) {
+            List<Task> tasks = new ArrayList<>();
+            for (ItemStack i : items) {
+                BQItemOrTask container = new BQItemOrTask();
+                container.items = Collections.singletonList(i);
+                container.ignoreNBT = ignoreNBT;
+                container.consume = consume;
+                tasks.addAll(Arrays.asList(container.create(quest)));
+            }
+            return tasks.toArray(new Task[0]);
+        }
+    }
+
+    private static class BQItemOrTask extends BQItemTask {
         @Override
         Task[] create(Quest quest) {
             ItemTask task = new ItemTask(quest);
