@@ -771,7 +771,12 @@ public class CommandImport extends CommandBase {
 
             return ItemStack.EMPTY;
         } else {
-            return (OreDictionary.doesOreNameExist(ore) ? OreDictionary.getOres(ore).get(0) : ItemStack.EMPTY);
+            if (!OreDictionary.doesOreNameExist(ore)) return ItemStack.EMPTY;
+            ItemStack stack = OreDictionary.getOres(ore).get(0);
+            if (stack.getMetadata() == OreDictionary.WILDCARD_VALUE) {
+                return new ItemStack(stack.getItem(), 1, 0);
+            }
+            return stack;
         }
     }
 
