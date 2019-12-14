@@ -269,6 +269,7 @@ public class CommandImport extends CommandBase {
                         BQAdvancementTask task = new BQAdvancementTask();
                         task.advancement = taskNbt.getString("trigger");
                         task.criterion = taskNbt.getString("conditions");
+                        quest.tasks.add(task);
                         break;
                     }
 
