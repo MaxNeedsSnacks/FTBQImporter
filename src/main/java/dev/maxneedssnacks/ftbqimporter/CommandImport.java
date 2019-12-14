@@ -264,6 +264,13 @@ public class CommandImport extends CommandBase {
                         break;
                     }
 
+                    case "bq_standard:trigger": {
+                        BQAdvancementTask task = new BQAdvancementTask();
+                        task.advancement = taskNbt.getString("trigger");
+                        task.criterion = taskNbt.getString("conditions");
+                        break;
+                    }
+
                     default:
                         sender.sendMessage(new TextComponentString("Can't import task with type " + type + ", you will have to manually re-add it!"));
                         break;
@@ -937,6 +944,19 @@ public class CommandImport extends CommandBase {
                 task.d = range;
                 return task;
             }
+        }
+    }
+
+    private static class BQAdvancementTask extends BQTask {
+        String advancement;
+        String criterion;
+
+        @Override
+        Task create(Quest quest) {
+            AdvancementTask task = new AdvancementTask(quest);
+            task.advancement = advancement;
+            task.criterion = criterion;
+            return task;
         }
     }
 
