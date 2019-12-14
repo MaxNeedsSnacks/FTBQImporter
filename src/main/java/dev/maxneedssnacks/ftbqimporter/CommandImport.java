@@ -391,7 +391,7 @@ public class CommandImport extends CommandBase {
         // remap old quest ids to new imported quests
 
         Map<Integer, Quest> newQuestMap = new HashMap<>();
-        Map<Quest, Map<Integer, Task>> questTaskMap = new HashMap<>();
+        Map<Quest, Map<Integer, Task[]>> questTaskMap = new HashMap<>();
 
         for (BQChapter chapter : chapters) {
             Chapter c = new Chapter(f);
@@ -420,10 +420,11 @@ public class CommandImport extends CommandBase {
                 }
 
                 for (BQTask task : quest.tasks) {
-                    Task t = task.create(q);
-                    t.id = f.newID();
-                    q.tasks.add(t);
-
+                    Task[] t = task.create(q);
+                    for (Task t2 : t) {
+                        t2.id = f.newID();
+                    }
+                    q.tasks.addAll(Arrays.asList(t));
                     questTaskMap.get(q).put(task.id, t);
                 }
 
@@ -475,7 +476,9 @@ public class CommandImport extends CommandBase {
 
             NBTTagCompound taskInfo = new NBTTagCompound();
             questInfo.setTag("tasks", taskInfo);
-            questTaskMap.get(ftbQuest).forEach((bqTask, ftbTask) -> taskInfo.setInteger(bqTask.toString(), ftbTask.id));
+            questTaskMap.get(ftbQuest).forEach((bqTask, ftbTasks) -> {
+                taskInfo.setIntArray(bqTask.toString(), Arrays.stream(ftbTasks).mapToInt(task -> task.id).toArray());
+            });
         });
 
         NBTTagCompound exportedData = new NBTTagCompound();
@@ -705,7 +708,7 @@ public class CommandImport extends CommandBase {
                 });
 
                 questData.tasks.forEach(taskData -> {
-                    getConvertedTask(f, questData.id, taskData.id, conversionData).ifPresent(task -> {
+                    getConvertedTasks(f, questData.id, taskData.id, conversionData).forEach(opt -> opt.ifPresent(task -> {
                         Collection<ForgeTeam> processedTask = new HashSet<>();
 
                         taskData.completeUsers.forEach(forgePlayer -> {
@@ -720,7 +723,7 @@ public class CommandImport extends CommandBase {
                                 processedTask.add(team);
                             }
                         });
-                    });
+                    }));
                 });
             });
         });
@@ -811,12 +814,16 @@ public class CommandImport extends CommandBase {
         ));
     }
 
-    private Optional<Task> getConvertedTask(ServerQuestFile f, int qid, int tid, NBTTagCompound mapping) {
-        return Optional.ofNullable(f.getTask(
-                mapping.getCompoundTag(Integer.toString(qid))
-                        .getCompoundTag("tasks")
-                        .getInteger(Integer.toString(tid))
-        ));
+    private List<Optional<Task>> getConvertedTasks(ServerQuestFile f, int qid, int tid, NBTTagCompound mapping) {
+        int[] ids = mapping.getCompoundTag(Integer.toString(qid))
+                .getCompoundTag("tasks")
+                .getIntArray(Integer.toString(tid));
+
+        List<Optional<Task>> tasks = new ArrayList<>();
+        for (int id : ids) {
+            tasks.add(Optional.ofNullable(f.getTask(id)));
+        }
+        return tasks;
     }
 
     // Progress-Related Stuff //
@@ -874,7 +881,7 @@ public class CommandImport extends CommandBase {
     private static abstract class BQTask {
         int id;
 
-        abstract Task create(Quest quest);
+        abstract Task[] create(Quest quest);
     }
 
     private static class BQItemTask extends BQTask {
@@ -883,7 +890,7 @@ public class CommandImport extends CommandBase {
         boolean consume;
 
         @Override
-        Task create(Quest quest) {
+        Task[] create(Quest quest) {
             ItemTask task = new ItemTask(quest);
             task.items.addAll(items);
 
@@ -901,14 +908,14 @@ public class CommandImport extends CommandBase {
                 task.nbtMode = NBTMatchingMode.IGNORE;
             }
 
-            return task;
+            return new Task[]{task};
         }
     }
 
     private static class BQCheckBoxTask extends BQTask {
         @Override
-        Task create(Quest quest) {
-            return new CheckmarkTask(quest);
+        Task[] create(Quest quest) {
+            return new Task[]{new CheckmarkTask(quest)};
         }
     }
 
@@ -917,11 +924,11 @@ public class CommandImport extends CommandBase {
         long required;
 
         @Override
-        Task create(Quest quest) {
+        Task[] create(Quest quest) {
             KillTask task = new KillTask(quest);
             task.entity = new ResourceLocation(target);
             task.value = required;
-            return task;
+            return new Task[]{task};
         }
     }
 
@@ -931,11 +938,11 @@ public class CommandImport extends CommandBase {
         boolean consume;
 
         @Override
-        Task create(Quest quest) {
+        Task[] create(Quest quest) {
             XPTask task = new XPTask(quest);
             task.value = xp;
             task.points = !levels;
-            return task;
+            return new Task[]{task};
         }
     }
 
@@ -945,11 +952,11 @@ public class CommandImport extends CommandBase {
         int range;
 
         @Override
-        Task create(Quest quest) {
+        Task[] create(Quest quest) {
             if (range == -1) {
                 DimensionTask task = new DimensionTask(quest);
                 task.dimension = dimension;
-                return task;
+                return new Task[]{task};
             } else {
                 LocationTask task = new LocationTask(quest);
                 task.dimension = dimension;
@@ -959,7 +966,7 @@ public class CommandImport extends CommandBase {
                 task.w = range;
                 task.h = range;
                 task.d = range;
-                return task;
+                return new Task[]{task};
             }
         }
     }
@@ -969,11 +976,11 @@ public class CommandImport extends CommandBase {
         String criterion;
 
         @Override
-        Task create(Quest quest) {
+        Task[] create(Quest quest) {
             AdvancementTask task = new AdvancementTask(quest);
             task.advancement = advancement;
             task.criterion = criterion;
-            return task;
+            return new Task[]{task};
         }
     }
 
