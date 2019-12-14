@@ -42,6 +42,7 @@ import net.minecraft.nbt.NBTTagString;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.NonNullList;
 import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.oredict.OreDictionary;
@@ -355,9 +356,9 @@ public class CommandImport extends CommandBase {
                 BQQuest quest = questMap.get(questNbt.getInteger("id"));
 
                 if (quest != null) {
-                    quest.x = questNbt.getDouble("x") / 24D;
-                    quest.y = questNbt.getDouble("y") / 24D;
-                    quest.size = Math.min(questNbt.getDouble("sizeX") / 24D, questNbt.getDouble("sizeY") / 24D);
+                    quest.size = MathHelper.clamp(Math.max(questNbt.getDouble("size"), Math.min(questNbt.getDouble("sizeX"), questNbt.getDouble("sizeY"))) / 24D, 0.5, 30);
+                    quest.x = (questNbt.getDouble("x") / 24D) + (quest.size / 2D);
+                    quest.y = (questNbt.getDouble("y") / 24D) + (quest.size / 2D);
                     chapter.quests.add(quest);
                 }
             }
