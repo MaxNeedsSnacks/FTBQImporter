@@ -262,6 +262,13 @@ public class CommandImport extends CommandBase {
                         break;
                     }
 
+                    case "bq_rf:rf_charge": {
+                        BQEnergyTask task = new BQEnergyTask();
+                        task.rf = taskNbt.getLong("rf");
+                        quest.tasks.add(task);
+                        break;
+                    }
+
                     default:
                         sender.sendMessage(new TextComponentString("Can't import task with type " + type + ", you will have to manually re-add it!"));
                         break;
@@ -977,6 +984,17 @@ public class CommandImport extends CommandBase {
             AdvancementTask task = new AdvancementTask(quest);
             task.advancement = advancement;
             task.criterion = criterion;
+            return new Task[]{task};
+        }
+    }
+
+    private static class BQEnergyTask extends BQTask {
+        long rf;
+
+        @Override
+        Task[] create(Quest quest) {
+            EnergyTask task = new ForgeEnergyTask(quest);
+            task.value = rf;
             return new Task[]{task};
         }
     }
