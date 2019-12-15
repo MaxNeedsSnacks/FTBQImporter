@@ -9,6 +9,7 @@ import com.feed_the_beast.ftblib.lib.data.ForgeTeam;
 import com.feed_the_beast.ftblib.lib.data.TeamType;
 import com.feed_the_beast.ftblib.lib.data.Universe;
 import com.feed_the_beast.ftblib.lib.io.DataReader;
+import com.feed_the_beast.ftblib.lib.math.MathUtils;
 import com.feed_the_beast.ftblib.lib.util.FileUtils;
 import com.feed_the_beast.ftblib.lib.util.NBTUtils;
 import com.feed_the_beast.ftblib.lib.util.StringUtils;
@@ -383,6 +384,13 @@ public class CommandImport extends CommandBase {
         orphanChapter.icon = f.icon;
         orphanChapter.quests = new ArrayList<>(questMap.values());
         orphanChapter.quests.removeAll(mappedQuests);
+        int table_size = (int) Math.ceil(MathUtils.sqrt(orphanChapter.quests.size()));
+        for (int i = 0; i < orphanChapter.quests.size(); i++) {
+            BQQuest quest = orphanChapter.quests.get(i);
+            quest.size = 1;
+            quest.x = i / table_size;
+            quest.y = i % table_size;
+        }
 
         // remap old quest ids to new imported quests
 
