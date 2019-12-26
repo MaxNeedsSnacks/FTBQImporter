@@ -44,7 +44,12 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.NonNullList;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.text.Style;
 import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.TextFormatting;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.fluids.FluidRegistry;
+import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.oredict.OreDictionary;
 
@@ -255,11 +260,25 @@ public class CommandImport extends CommandBase {
                         break;
                     }
 
-                    case "bq_standard:trigger": {
+                    case "bq_standard:advancement": {
                         BQAdvancementTask task = new BQAdvancementTask();
-                        task.advancement = taskNbt.getString("trigger");
-                        task.criterion = taskNbt.getString("conditions");
+                        task.advancement = taskNbt.getString("advancement_id");
+                        task.criterion = "";
                         quest.tasks.add(task);
+                        break;
+                    }
+
+                    case "bq_standard:trigger": {
+                        String trigger = taskNbt.getString("trigger");
+                        if (server.getAdvancementManager().getAdvancement(new ResourceLocation(trigger)) != null) {
+                            BQAdvancementTask task = new BQAdvancementTask();
+                            task.advancement = trigger;
+                            task.criterion = taskNbt.getString("conditions");
+                            quest.tasks.add(task);
+                        } else {
+                            sender.sendMessage(new TextComponentString("Skipped an unsupported trigger task for quest '" + quest.name + "' (#" + quest.id + ") - Triggers have to be advancements!")
+                                    .setStyle(new Style().setColor(TextFormatting.YELLOW)));
+                        }
                         break;
                     }
 
@@ -267,6 +286,32 @@ public class CommandImport extends CommandBase {
                         BQEnergyTask task = new BQEnergyTask();
                         task.rf = taskNbt.getLong("rf");
                         quest.tasks.add(task);
+                        break;
+                    }
+
+                    case "bq_standard:fluid": {
+                        boolean consume = taskNbt.getBoolean("consume");
+                        if (consume) {
+                            BQFluidTask task = new BQFluidTask();
+                            task.ignoreNBT = taskNbt.getBoolean("ignoreNBT");
+                            task.fluids = new ArrayList<>();
+                            for (NBTBase taskFluidBase : taskNbt.getTagList("requiredFluids", 10)) {
+                                NBTTagCompound taskFluid = (NBTTagCompound) taskFluidBase;
+                                Fluid fluid = FluidRegistry.getFluid(taskFluid.getString("FluidName"));
+                                if (fluid != null) {
+                                    int amount = taskFluid.getInteger("Amount");
+                                    NBTTagCompound tag = taskFluid.getCompoundTag("Tag");
+                                    FluidStack fluidStack = new FluidStack(fluid, amount, tag);
+                                    task.fluids.add(fluidStack);
+                                }
+                            }
+                            if (!task.fluids.isEmpty()) {
+                                quest.tasks.add(task);
+                            }
+                        } else {
+                            sender.sendMessage(new TextComponentString("Skipped an unsupported fluid task for quest '" + quest.name + "' (#" + quest.id + ") - Fluid tasks cannot be non-consuming!")
+                                    .setStyle(new Style().setColor(TextFormatting.YELLOW)));
+                        }
                         break;
                     }
 
@@ -921,6 +966,24 @@ public class CommandImport extends CommandBase {
             }
 
             return new Task[]{task};
+        }
+    }
+
+    private static class BQFluidTask extends BQTask {
+        List<FluidStack> fluids;
+        boolean ignoreNBT;
+
+        @Override
+        Task[] create(Quest quest) {
+            List<Task> tasks = new ArrayList<>();
+            for (FluidStack fluid : fluids) {
+                FluidTask task = new FluidTask(quest);
+                task.fluid = fluid.getFluid();
+                task.amount = fluid.amount;
+                task.fluidNBT = ignoreNBT ? null : fluid.tag;
+                tasks.add(task);
+            }
+            return tasks.toArray(new Task[0]);
         }
     }
 
