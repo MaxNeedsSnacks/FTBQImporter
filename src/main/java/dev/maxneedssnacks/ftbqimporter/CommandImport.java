@@ -401,6 +401,7 @@ public class CommandImport extends CommandBase {
             chapter.desc = properties.getString("desc").trim().split("\n");
             chapter.icon = nbtItem(properties.getCompoundTag("icon"));
             chapter.quests = new ArrayList<>();
+            chapter.order = chapterNbt.getInteger("order");
 
             for (NBTBase questBase : chapterNbt.getTagList("quests", 10)) {
                 NBTTagCompound questNbt = (NBTTagCompound) questBase;
@@ -417,6 +418,8 @@ public class CommandImport extends CommandBase {
                 }
             }
         }
+
+        chapters.sort((ch1, ch2) -> Integer.compare(ch1.order, ch2.order));
 
         // add orphan quests
         BQChapter orphanChapter = new BQChapter();
@@ -914,6 +917,7 @@ public class CommandImport extends CommandBase {
         String name;
         String[] desc;
         ItemStack icon;
+        int order;
     }
 
     // Tasks //
