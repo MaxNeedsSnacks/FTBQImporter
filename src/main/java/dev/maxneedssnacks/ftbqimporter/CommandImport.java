@@ -101,6 +101,7 @@ public class CommandImport extends CommandBase {
 
         // additional flags that may be supplied
         boolean fix_icons = flags.contains("-i") || flags.contains("--fix-icons");
+        boolean default_icons = flags.contains("-d") || flags.contains("--default-icons");
         boolean truncate_loot = flags.contains("-l") || flags.contains("--truncate-loot");
         boolean auto_cmd = flags.contains("-c") || flags.contains("--auto-cmd");
 
@@ -451,7 +452,8 @@ public class CommandImport extends CommandBase {
             f.chapters.add(c);
             c.title = chapter.name;
             c.subtitle.addAll(Arrays.asList(chapter.desc));
-            c.icon = fix_icons ? chapter.icon.splitStack(1) : chapter.icon;
+
+            Quest icon_quest = null;
 
             for (BQQuest quest : chapter.quests) {
                 Quest q = new Quest(c);
@@ -466,6 +468,13 @@ public class CommandImport extends CommandBase {
                 q.y = quest.y;
                 q.size = quest.size;
                 q.canRepeat = quest.repeatTime > 0;
+                
+                if (default_icons && q.icon != null &&
+                	(quest.dependencies == null || quest.dependencies.length == 0) &&
+                	(icon_quest == null || (q.x + q.y) < (icon_quest.x + icon_quest.y))) {
+                	
+                	icon_quest = q;
+                }
 
                 if (quest.isSilent) {
                     q.disableToast = true;
@@ -493,6 +502,12 @@ public class CommandImport extends CommandBase {
                     r.id = f.newID();
                     q.rewards.add(r);
                 }
+            }
+            
+            if (icon_quest != null) {
+            	c.icon = icon_quest.icon;
+            } else {
+            	c.icon = fix_icons ? chapter.icon.splitStack(1) : chapter.icon;
             }
         }
 
