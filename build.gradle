@@ -50,7 +50,18 @@ configurations.all {
 
 repositories {
     mavenLocal()
-    maven { url "https://maven.latmod.com/" } //Aurora
+    maven { url "https://maven.latmod.com/" }
+
+    maven {
+        // location of the maven that hosts JEI files
+        name = "Progwml6 maven"
+        url = "https://dvs1.progwml6.com/files/maven/"
+    }
+    maven {
+        // location of a maven mirror for JEI files, as a fallback
+        name = "ModMaven"
+        url = "https://modmaven.k-4u.nl"
+    }
 }
 
 dependencies {
@@ -58,6 +69,9 @@ dependencies {
     deobfCompile "com.feed_the_beast.mods:FTBQuests:${ftbq_version}"
     //deobfCompile "com.feed_the_beast.mods:FTBUtilities:5.+"
     deobfCompile "com.latmod.mods:ItemFilters:${filters_version}"
+
+    // at runtime, use the full JEI jar
+    runtime "mezz.jei:jei_${mc_version}:4.15.0.293"
 }
 
 processResources {

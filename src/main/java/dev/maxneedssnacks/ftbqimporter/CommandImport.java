@@ -163,7 +163,7 @@ public class CommandImport extends CommandBase {
 
                 crateTable.rewards.add(new WeightedReward(new ItemReward(crateTable.fakeQuest, table.lootCrate.createStack()), groupNbt.getInteger("weight")));
 
-                for (NBTBase rewardBase : defaultLoot.getTagList("rewards", 10)) {
+                for (NBTBase rewardBase : groupNbt.getTagList("rewards", 10)) {
                     NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
                     for (NBTBase rewardItem : rewardNbt.getTagList("items", 10)) {
                         ItemStack stack = nbtItem((NBTTagCompound) rewardItem);
@@ -420,7 +420,7 @@ public class CommandImport extends CommandBase {
             }
         }
 
-        chapters.sort((ch1, ch2) -> Integer.compare(ch1.order, ch2.order));
+        chapters.sort(Comparator.comparingInt(ch -> ch.order));
 
         // add orphan quests
         BQChapter orphanChapter = new BQChapter();
@@ -437,6 +437,7 @@ public class CommandImport extends CommandBase {
         for (int i = 0; i < orphanChapter.quests.size(); i++) {
             BQQuest quest = orphanChapter.quests.get(i);
             quest.size = 1;
+            //noinspection IntegerDivisionInFloatingPointContext
             quest.x = i / table_size;
             quest.y = i % table_size;
         }
@@ -468,12 +469,12 @@ public class CommandImport extends CommandBase {
                 q.y = quest.y;
                 q.size = quest.size;
                 q.canRepeat = quest.repeatTime > 0;
-                
+
                 if (default_icons && q.icon != null &&
-                	(quest.dependencies == null || quest.dependencies.length == 0) &&
-                	(icon_quest == null || (q.x + q.y) < (icon_quest.x + icon_quest.y))) {
-                	
-                	icon_quest = q;
+                        (quest.dependencies == null || quest.dependencies.length == 0) &&
+                        (icon_quest == null || (q.x + q.y) < (icon_quest.x + icon_quest.y))) {
+
+                    icon_quest = q;
                 }
 
                 if (quest.isSilent) {
@@ -503,11 +504,11 @@ public class CommandImport extends CommandBase {
                     q.rewards.add(r);
                 }
             }
-            
+
             if (icon_quest != null) {
-            	c.icon = icon_quest.icon;
+                c.icon = icon_quest.icon;
             } else {
-            	c.icon = fix_icons ? chapter.icon.splitStack(1) : chapter.icon;
+                c.icon = fix_icons ? chapter.icon.splitStack(1) : chapter.icon;
             }
         }
 
