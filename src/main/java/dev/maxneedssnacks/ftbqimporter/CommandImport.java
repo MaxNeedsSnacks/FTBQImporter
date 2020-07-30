@@ -18,20 +18,13 @@ import com.feed_the_beast.ftbquests.quest.ChangeProgress;
 import com.feed_the_beast.ftbquests.quest.Chapter;
 import com.feed_the_beast.ftbquests.quest.Quest;
 import com.feed_the_beast.ftbquests.quest.ServerQuestFile;
-import com.feed_the_beast.ftbquests.quest.loot.LootCrate;
 import com.feed_the_beast.ftbquests.quest.loot.RewardTable;
 import com.feed_the_beast.ftbquests.quest.loot.WeightedReward;
 import com.feed_the_beast.ftbquests.quest.reward.*;
 import com.feed_the_beast.ftbquests.quest.task.*;
 import com.feed_the_beast.ftbquests.util.ServerQuestData;
 import com.google.gson.JsonElement;
-import com.latmod.mods.itemfilters.api.IItemFilter;
-import com.latmod.mods.itemfilters.api.ItemFiltersAPI;
 import com.latmod.mods.itemfilters.filters.NBTMatchingMode;
-import com.latmod.mods.itemfilters.filters.OreDictionaryFilter;
-import com.latmod.mods.itemfilters.item.ItemFilter;
-import com.latmod.mods.itemfilters.item.ItemFiltersItems;
-import com.latmod.mods.itemfilters.item.ItemMissing;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
@@ -41,7 +34,6 @@ import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagString;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.NonNullList;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.text.Style;
@@ -51,7 +43,6 @@ import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fml.common.Loader;
-import net.minecraftforge.oredict.OreDictionary;
 
 import java.io.File;
 import java.util.*;
@@ -70,7 +61,7 @@ public class CommandImport extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/ftbq_import <quests|progress> [-i, -l, -c]";
+        return "/ftbq_import <quests|progress> [-c, -d]";
     }
 
     @Override
@@ -95,14 +86,8 @@ public class CommandImport extends CommandBase {
 
     public void importQuests(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
 
-        if (!flags.isEmpty()) {
-            sender.sendMessage(new TextComponentString("Flags supplied: " + joinNiceStringFromCollection(flags)));
-        }
-
         // additional flags that may be supplied
-        boolean fix_icons = flags.contains("-i") || flags.contains("--fix-icons");
         boolean default_icons = flags.contains("-d") || flags.contains("--default-icons");
-        boolean truncate_loot = flags.contains("-l") || flags.contains("--truncate-loot");
         boolean auto_cmd = flags.contains("-c") || flags.contains("--auto-cmd");
 
         JsonElement defaultQuestsJson = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultQuests.json")).safeJson();
@@ -129,51 +114,18 @@ public class CommandImport extends CommandBase {
 
         // also clear out quest data in case of a re-import of quests
         FileUtils.deleteSafe(new File(f.universe.getWorldDirectory(), "data/ftb_lib/teams/ftbquests"));
+        FileUtils.deleteSafe(new File(Loader.instance().getConfigDir(), "imported_quests.nbt"));
 
         Map<Integer, BQQuest> questMap = new HashMap<>();
         Set<BQQuest> mappedQuests = new HashSet<>();
         List<BQChapter> chapters = new ArrayList<>();
 
         // region loot
-        RewardTable crateTable = null;
+        LootImporter lootImporter = null;
 
         if (defaultLootJson.isJsonObject()) {
-            NBTTagCompound defaultLoot = NBTConverter.JSONtoNBT_Object(defaultLootJson.getAsJsonObject(), new NBTTagCompound(), true);
-
-            crateTable = new RewardTable(f);
-            crateTable.id = f.newID();
-            f.rewardTables.add(crateTable);
-            crateTable.title = "Loot Chest";
-            if (!truncate_loot) {
-                crateTable.lootCrate = new LootCrate(crateTable);
-                crateTable.lootCrate.stringID = "loot_chest";
-                crateTable.lootCrate.glow = true;
-            }
-
-            for (NBTBase groupBase : defaultLoot.getTagList("groups", 10)) {
-                NBTTagCompound groupNbt = (NBTTagCompound) groupBase;
-
-                RewardTable table = new RewardTable(f);
-                table.title = groupNbt.getString("name");
-                table.id = f.newID();
-                f.rewardTables.add(table);
-                table.lootCrate = new LootCrate(table);
-                table.lootCrate.stringID = StringUtils.getID(table.title, StringUtils.FLAG_ID_DEFAULTS);
-                table.lootCrate.itemName = table.title;
-
-                crateTable.rewards.add(new WeightedReward(new ItemReward(crateTable.fakeQuest, table.lootCrate.createStack()), groupNbt.getInteger("weight")));
-
-                for (NBTBase rewardBase : groupNbt.getTagList("rewards", 10)) {
-                    NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
-                    for (NBTBase rewardItem : rewardNbt.getTagList("items", 10)) {
-                        ItemStack stack = nbtItem((NBTTagCompound) rewardItem);
-                        if (!stack.isEmpty()) {
-                            table.rewards.add(new WeightedReward(new ItemReward(table.fakeQuest, stack), rewardNbt.getInteger("weight")));
-                            break;
-                        }
-                    }
-                }
-            }
+            lootImporter = new LootImporter(defaultLootJson.getAsJsonObject());
+            lootImporter.processLoot(f);
         }
         // endregion loot
 
@@ -192,7 +144,7 @@ public class CommandImport extends CommandBase {
             NBTTagCompound properties = questNbt.getCompoundTag("properties").getCompoundTag("betterquesting");
             quest.name = properties.getString("name").trim();
             quest.description = properties.getString("desc").trim().split("\n");
-            quest.icon = nbtItem(properties.getCompoundTag("icon"));
+            quest.icon = Utils.nbtItem(properties.getCompoundTag("icon"));
             quest.isSilent = properties.getBoolean("issilent");
             quest.taskLogicAnd = properties.getString("tasklogic").equalsIgnoreCase("AND");
             quest.repeatTime = properties.getInteger("repeattime");
@@ -215,7 +167,7 @@ public class CommandImport extends CommandBase {
                         task.consume = taskNbt.getBoolean("consume");
 
                         for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
-                            ItemStack item = nbtItem((NBTTagCompound) taskItemBase, true);
+                            ItemStack item = Utils.nbtItem((NBTTagCompound) taskItemBase, true);
                             if (!item.isEmpty()) {
                                 task.items.add(item);
                             }
@@ -333,14 +285,14 @@ public class CommandImport extends CommandBase {
                         for (NBTBase rewardItem : rewardNbt.getTagList("rewards", 10)) {
 
                             BQItemReward reward = new BQItemReward();
-                            reward.item = nbtItem((NBTTagCompound) rewardItem);
+                            reward.item = Utils.nbtItem((NBTTagCompound) rewardItem);
 
                             ItemStack loot_chest = new ItemStack(FTBQuestsItems.LOOTCRATE);
                             loot_chest.setTagInfo("type", new NBTTagString("loot_chest"));
 
-                            if (truncate_loot && ItemStack.areItemStackTagsEqual(reward.item, loot_chest) && crateTable != null) {
+                            if (ItemStack.areItemStackTagsEqual(reward.item, loot_chest) && lootImporter != null) {
                                 BQLootChestReward loot_reward = new BQLootChestReward();
-                                loot_reward.table = crateTable;
+                                loot_reward.table = lootImporter.getTable();
                                 quest.rewards.add(loot_reward);
                             } else if (!reward.item.isEmpty()) {
                                 quest.rewards.add(reward);
@@ -355,7 +307,7 @@ public class CommandImport extends CommandBase {
                         reward.items = new ArrayList<>();
 
                         for (NBTBase rewardItem : rewardNbt.getTagList("choices", 10)) {
-                            ItemStack stack = nbtItem((NBTTagCompound) rewardItem);
+                            ItemStack stack = Utils.nbtItem((NBTTagCompound) rewardItem);
                             if (!stack.isEmpty()) {
                                 reward.items.add(stack);
                             }
@@ -400,7 +352,7 @@ public class CommandImport extends CommandBase {
             chapters.add(chapter);
             chapter.name = properties.getString("name").trim();
             chapter.desc = properties.getString("desc").trim().split("\n");
-            chapter.icon = nbtItem(properties.getCompoundTag("icon"));
+            chapter.icon = Utils.nbtItem(properties.getCompoundTag("icon"));
             chapter.quests = new ArrayList<>();
             chapter.order = chapterNbt.getInteger("order");
 
@@ -464,13 +416,13 @@ public class CommandImport extends CommandBase {
                 c.quests.add(q);
                 q.title = quest.name;
                 q.description.addAll(Arrays.asList(quest.description));
-                q.icon = fix_icons ? quest.icon.splitStack(1) : quest.icon;
+                q.icon = quest.icon.splitStack(1);
                 q.x = quest.x;
                 q.y = quest.y;
                 q.size = quest.size;
                 q.canRepeat = quest.repeatTime > 0;
 
-                if (default_icons && q.icon != null &&
+                if (default_icons &&
                         (quest.dependencies == null || quest.dependencies.length == 0) &&
                         (icon_quest == null || (q.x + q.y) < (icon_quest.x + icon_quest.y))) {
 
@@ -508,7 +460,7 @@ public class CommandImport extends CommandBase {
             if (icon_quest != null) {
                 c.icon = icon_quest.icon;
             } else {
-                c.icon = fix_icons ? chapter.icon.splitStack(1) : chapter.icon;
+                c.icon = chapter.icon.splitStack(1);
             }
         }
 
@@ -789,81 +741,6 @@ public class CommandImport extends CommandBase {
 
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfully migrated quest progression for all Better Questing parties to FTB Quests!"));
         server.getPlayerList().sendMessage(new TextComponentString("Players, please note that you may be required to join your former party owner's team in order to get your progress back!"));
-    }
-
-    private ItemStack nbtItem(NBTTagCompound itemNbt) {
-        return nbtItem(itemNbt, false);
-    }
-
-    private ItemStack nbtItem(NBTTagCompound itemNbt, boolean isFilter) {
-
-        ItemStack stack = ItemStack.EMPTY;
-
-        if (itemNbt.isEmpty()) {
-            FTBQImporter.LOGGER.debug("Item Task {} has incorrect format! Returning empty item stack", itemNbt);
-            return stack;
-        }
-
-        String ore = itemNbt.getString("OreDict");
-        if (!ore.isEmpty()) {
-            stack = oreDictItem(ore, isFilter);
-        }
-        itemNbt.removeTag("OreDict");
-
-        if (!stack.isEmpty()) return stack;
-
-        String id = itemNbt.getString("id");
-
-        if (id.isEmpty() || id.equals("betterquesting:placeholder")) {
-            FTBQImporter.LOGGER.debug("Item ID {} is invalid or empty! Returning empty item stack", id);
-            return stack;
-        } else if (id.equals("bq_standard:loot_chest")) {
-            stack = new ItemStack(FTBQuestsItems.LOOTCRATE);
-            stack.setTagInfo("type", new NBTTagString("loot_chest"));
-            return stack;
-        }
-
-        stack = ItemMissing.read(itemNbt);
-        if (stack.isEmpty() || stack.isItemEqual(new ItemStack(ItemFiltersItems.MISSING))) {
-            FTBQImporter.LOGGER.debug("{} returned an empty or missing item!", itemNbt);
-        } else {
-            FTBQImporter.LOGGER.debug("Found an item with properties {}!", itemNbt);
-        }
-        return stack;
-
-    }
-
-    private ItemStack oreDictItem(String ore, boolean isFilter) {
-        if (isFilter) {
-            ItemStack oreFilter = new ItemStack(ItemFiltersItems.FILTER);
-            IItemFilter filter = ItemFiltersAPI.getFilter(oreFilter);
-
-            if (filter instanceof ItemFilter.ItemFilterData) {
-                ItemFilter.ItemFilterData data = (ItemFilter.ItemFilterData) filter;
-                OreDictionaryFilter odFilter = new OreDictionaryFilter();
-                odFilter.setValue(ore);
-                data.filter = odFilter;
-
-                List<ItemStack> valid_items = NonNullList.create();
-                filter.getValidItems(valid_items);
-                if (valid_items.isEmpty()) {
-                    FTBQImporter.LOGGER.debug("Warning: Did not create Ore Dictionary filter with value {} as it is empty!", ore);
-                    return ItemStack.EMPTY;
-                }
-
-                FTBQImporter.LOGGER.debug("Successfully created ore dictionary filter with value {}", ore);
-                return oreFilter;
-            }
-
-            return ItemStack.EMPTY;
-        } else {
-            if (!OreDictionary.doesOreNameExist(ore)) return ItemStack.EMPTY;
-            ItemStack stack = OreDictionary.getOres(ore).get(0);
-            if (stack.getMetadata() == OreDictionary.WILDCARD_VALUE) {
-                return new ItemStack(stack.getItem(), 1, 0);
-            }
-            return stack;
-        }
     }
 
     private Optional<Quest> getConvertedQuest(ServerQuestFile f, int qid, NBTTagCompound mapping) {
