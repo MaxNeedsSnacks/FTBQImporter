@@ -7,7 +7,7 @@ buildscript {
     dependencies {
         classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
         classpath 'gradle.plugin.com.matthewprenger:CurseGradle:1.1.0'
-        classpath 'com.wynprice.cursemaven:CurseMaven:1.2.+'
+        classpath 'com.wynprice.cursemaven:CurseMaven:2.1.+'
     }
 }
 
@@ -36,7 +36,7 @@ minecraft {
     replace "0.0.0.forge", min_forge_version
 
     replace "0.0.0.ftblib", ftblib_version
-    replace "0.0.0.ftbq", ftbq_version
+    replace "0.0.0.ftbq", ftbquests_version
     replace "0.0.0.filters", filters_version
 
     replace "0.0.0.ftbqi", project.version
@@ -66,12 +66,21 @@ repositories {
 
 dependencies {
     deobfCompile "com.feed_the_beast.mods:FTBLib:${ftblib_version}"
-    deobfCompile "com.feed_the_beast.mods:FTBQuests:${ftbq_version}"
     //deobfCompile "com.feed_the_beast.mods:FTBUtilities:5.+"
+    deobfCompile "com.feed_the_beast.mods:FTBQuests:${ftbquests_version}"
     deobfCompile "com.latmod.mods:ItemFilters:${filters_version}"
 
     // at runtime, use the full JEI jar
     runtime "mezz.jei:jei_${mc_version}:4.15.0.293"
+
+    // test mods for dev env
+    runtime "curse.maven:ctm:2915363"
+    runtime "curse.maven:chisel:2915375"
+
+    runtime "curse.maven:ae2:2747063"
+
+    runtime "curse.maven:gtce:3017373"
+    runtime "curse.maven:ccl:2779848"
 }
 
 processResources {
