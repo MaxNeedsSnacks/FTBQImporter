@@ -11,19 +11,25 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 public class LootImporter {
+
+    private static LootImporter INSTANCE = null;
+
     private final NBTTagCompound lootFile;
     private RewardTable crateTable;
 
     public LootImporter(NBTTagCompound lootFile) {
+        INSTANCE = this;
         this.lootFile = lootFile;
     }
 
     public LootImporter(JsonObject lootJson) {
+        INSTANCE = this;
         this.lootFile = NBTConverter.JSONtoNBT_Object(lootJson, new NBTTagCompound(), true);
     }
 
@@ -78,6 +84,11 @@ public class LootImporter {
             }
         }
         return true;
+    }
+
+    @Nullable
+    public static LootImporter get() {
+        return INSTANCE;
     }
 
     public RewardTable getTable() {

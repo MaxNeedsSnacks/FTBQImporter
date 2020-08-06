@@ -13,39 +13,38 @@ import com.feed_the_beast.ftblib.lib.math.MathUtils;
 import com.feed_the_beast.ftblib.lib.util.FileUtils;
 import com.feed_the_beast.ftblib.lib.util.NBTUtils;
 import com.feed_the_beast.ftblib.lib.util.StringUtils;
-import com.feed_the_beast.ftbquests.item.FTBQuestsItems;
 import com.feed_the_beast.ftbquests.quest.ChangeProgress;
 import com.feed_the_beast.ftbquests.quest.Chapter;
 import com.feed_the_beast.ftbquests.quest.Quest;
 import com.feed_the_beast.ftbquests.quest.ServerQuestFile;
-import com.feed_the_beast.ftbquests.quest.loot.RewardTable;
-import com.feed_the_beast.ftbquests.quest.loot.WeightedReward;
-import com.feed_the_beast.ftbquests.quest.reward.*;
-import com.feed_the_beast.ftbquests.quest.task.*;
+import com.feed_the_beast.ftbquests.quest.reward.CommandReward;
+import com.feed_the_beast.ftbquests.quest.reward.Reward;
+import com.feed_the_beast.ftbquests.quest.reward.RewardAutoClaim;
+import com.feed_the_beast.ftbquests.quest.task.Task;
 import com.feed_the_beast.ftbquests.util.ServerQuestData;
+import com.google.common.primitives.Ints;
 import com.google.gson.JsonElement;
-import com.latmod.mods.itemfilters.filters.NBTMatchingMode;
+import it.unimi.dsi.fastutil.ints.Int2ObjectAVLTreeMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectSortedMap;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
 import net.minecraft.command.WrongUsageException;
-import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagString;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.text.Style;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.TextFormatting;
-import net.minecraftforge.fluids.Fluid;
-import net.minecraftforge.fluids.FluidRegistry;
-import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fml.common.Loader;
 
 import java.io.File;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author LatvianModder, MaxNeedsSnacks
@@ -87,7 +86,8 @@ public class CommandImport extends CommandBase {
     public void importQuests(MinecraftServer server, ICommandSender sender, List<String> flags) throws CommandException {
 
         // additional flags that may be supplied
-        boolean default_icons = flags.contains("-d") || flags.contains("--default-icons");
+        // TODO: reimplement
+        // boolean default_icons = flags.contains("-d") || flags.contains("--default-icons");
         boolean auto_cmd = flags.contains("-c") || flags.contains("--auto-cmd");
 
         JsonElement defaultQuestsJson = DataReader.get(new File(Loader.instance().getConfigDir(), "betterquesting/DefaultQuests.json")).safeJson();
@@ -116,380 +116,209 @@ public class CommandImport extends CommandBase {
         FileUtils.deleteSafe(new File(f.universe.getWorldDirectory(), "data/ftb_lib/teams/ftbquests"));
         FileUtils.deleteSafe(new File(Loader.instance().getConfigDir(), "imported_quests.nbt"));
 
-        Map<Integer, BQQuest> questMap = new HashMap<>();
-        Set<BQQuest> mappedQuests = new HashSet<>();
-        List<BQChapter> chapters = new ArrayList<>();
+        // Map<Integer, BQQuest> questMap = new HashMap<>();
+        Int2ObjectSortedMap<Chapter> chapters = new Int2ObjectAVLTreeMap<>();
+        Int2ObjectMap<Quest> questMap = new Int2ObjectOpenHashMap<>();
+        Map<Quest, Int2ObjectMap<Collection<Task>>> questTaskMap = new HashMap<>();
 
-        // region loot
-        LootImporter lootImporter = null;
+        HashMap<Quest, Collection<Integer>> deps = new HashMap<>();
+
+        sender.sendMessage(new TextComponentString("[1/5] Importing loot..."));
+        // region STEP_1
+        LootImporter lootImporter;
 
         if (defaultLootJson.isJsonObject()) {
             lootImporter = new LootImporter(defaultLootJson.getAsJsonObject());
-            lootImporter.processLoot(f);
-        }
-        // endregion loot
-
-        for (NBTBase questBase : defaultQuests.getTagList("questDatabase", 10)) {
-            NBTTagCompound questNbt = (NBTTagCompound) questBase;
-
-            BQQuest quest = new BQQuest();
-            quest.id = questNbt.getInteger("questID");
-            questMap.put(quest.id, quest);
-
-            quest.dependencies = questNbt.getIntArray("preRequisites");
-
-            quest.tasks = new ArrayList<>();
-            quest.rewards = new ArrayList<>();
-
-            NBTTagCompound properties = questNbt.getCompoundTag("properties").getCompoundTag("betterquesting");
-            quest.name = properties.getString("name").trim();
-            quest.description = properties.getString("desc").trim().split("\n");
-            quest.icon = Utils.nbtItem(properties.getCompoundTag("icon"));
-            quest.isSilent = properties.getBoolean("issilent");
-            quest.taskLogicAnd = properties.getString("tasklogic").equalsIgnoreCase("AND");
-            quest.repeatTime = properties.getInteger("repeattime");
-            quest.teamReward = properties.getBoolean("partysinglereward");
-            quest.autoClaim = properties.getBoolean("autoclaim");
-
-            // region tasks
-            for (NBTBase taskBase : questNbt.getTagList("tasks", 10)) {
-                NBTTagCompound taskNbt = (NBTTagCompound) taskBase;
-
-                String type = taskNbt.getString("taskID");
-
-                switch (type) {
-                    case "bq_standard:crafting":
-                    case "bq_standard:retrieval": {
-                        BQItemTask task = quest.taskLogicAnd ? new BQItemAndTask() : new BQItemOrTask();
-                        task.id = taskNbt.getInteger("index");
-                        task.items = new ArrayList<>();
-                        task.ignoreNBT = taskNbt.getBoolean("ignoreNBT");
-                        task.consume = taskNbt.getBoolean("consume");
-
-                        for (NBTBase taskItemBase : taskNbt.getTagList("requiredItems", 10)) {
-                            ItemStack item = Utils.nbtItem((NBTTagCompound) taskItemBase, true);
-                            if (!item.isEmpty()) {
-                                task.items.add(item);
-                            }
-                        }
-                        if (!task.items.isEmpty()) {
-                            quest.tasks.add(task);
-                        }
-                        break;
-                    }
-
-                    case "bq_standard:checkbox":
-                        quest.tasks.add(new BQCheckBoxTask());
-                        break;
-
-                    case "bq_standard:xp": {
-                        BQXPTask task = new BQXPTask();
-                        task.id = taskNbt.getInteger("index");
-                        task.xp = taskNbt.getLong("amount");
-                        task.consume = taskNbt.getBoolean("consume");
-                        task.levels = taskNbt.getBoolean("isLevels");
-                        quest.tasks.add(task);
-                        break;
-                    }
-
-                    case "bq_standard:hunt": {
-                        BQHuntTask task = new BQHuntTask();
-                        task.id = taskNbt.getInteger("index");
-                        task.target = taskNbt.getString("target");
-                        task.required = taskNbt.getLong("required");
-                        quest.tasks.add(task);
-                        break;
-                    }
-
-                    case "bq_standard:location": {
-                        BQLocationTask task = new BQLocationTask();
-                        task.id = taskNbt.getInteger("index");
-                        task.x = taskNbt.getInteger("posX");
-                        task.y = taskNbt.getInteger("posY");
-                        task.z = taskNbt.getInteger("posZ");
-                        task.dimension = taskNbt.getInteger("dimension");
-                        task.range = taskNbt.getInteger("range");
-                        quest.tasks.add(task);
-                        break;
-                    }
-
-                    case "bq_standard:advancement": {
-                        BQAdvancementTask task = new BQAdvancementTask();
-                        task.advancement = taskNbt.getString("advancement_id");
-                        task.criterion = "";
-                        quest.tasks.add(task);
-                        break;
-                    }
-
-                    case "bq_standard:trigger": {
-                        String trigger = taskNbt.getString("trigger");
-                        if (server.getAdvancementManager().getAdvancement(new ResourceLocation(trigger)) != null) {
-                            BQAdvancementTask task = new BQAdvancementTask();
-                            task.advancement = trigger;
-                            task.criterion = taskNbt.getString("conditions");
-                            quest.tasks.add(task);
-                        } else {
-                            sender.sendMessage(new TextComponentString("Skipped an unsupported trigger task for quest '" + quest.name + "' (#" + quest.id + ") - Triggers have to be advancements!")
-                                    .setStyle(new Style().setColor(TextFormatting.YELLOW)));
-                        }
-                        break;
-                    }
-
-                    case "bq_rf:rf_charge": {
-                        BQEnergyTask task = new BQEnergyTask();
-                        task.rf = taskNbt.getLong("rf");
-                        quest.tasks.add(task);
-                        break;
-                    }
-
-                    case "bq_standard:fluid": {
-                        boolean consume = taskNbt.getBoolean("consume");
-                        if (consume) {
-                            BQFluidTask task = new BQFluidTask();
-                            task.ignoreNBT = taskNbt.getBoolean("ignoreNBT");
-                            task.fluids = new ArrayList<>();
-                            for (NBTBase taskFluidBase : taskNbt.getTagList("requiredFluids", 10)) {
-                                NBTTagCompound taskFluid = (NBTTagCompound) taskFluidBase;
-                                Fluid fluid = FluidRegistry.getFluid(taskFluid.getString("FluidName"));
-                                if (fluid != null) {
-                                    int amount = taskFluid.getInteger("Amount");
-                                    NBTTagCompound tag = taskFluid.getCompoundTag("Tag");
-                                    FluidStack fluidStack = new FluidStack(fluid, amount, tag);
-                                    task.fluids.add(fluidStack);
-                                }
-                            }
-                            if (!task.fluids.isEmpty()) {
-                                quest.tasks.add(task);
-                            }
-                        } else {
-                            sender.sendMessage(new TextComponentString("Skipped an unsupported fluid task for quest '" + quest.name + "' (#" + quest.id + ") - Fluid tasks cannot be non-consuming!")
-                                    .setStyle(new Style().setColor(TextFormatting.YELLOW)));
-                        }
-                        break;
-                    }
-
-                    default:
-                        sender.sendMessage(new TextComponentString("Can't import task with type " + type + ", you will have to manually re-add it!"));
-                        break;
-                }
+            if (!lootImporter.processLoot(f)) {
+                sender.sendMessage(new TextComponentString("WARNING: Loot importing finished with warnings! Please check latest.log for more information!")
+                        .setStyle(new Style().setColor(TextFormatting.YELLOW)));
             }
-            // endregion tasks
-
-            // region rewards
-            for (NBTBase rewardBase : questNbt.getTagList("rewards", 10)) {
-                NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
-                String type = rewardNbt.getString("rewardID");
-
-                switch (type) {
-                    case "bq_standard:item": {
-                        for (NBTBase rewardItem : rewardNbt.getTagList("rewards", 10)) {
-
-                            BQItemReward reward = new BQItemReward();
-                            reward.item = Utils.nbtItem((NBTTagCompound) rewardItem);
-
-                            ItemStack loot_chest = new ItemStack(FTBQuestsItems.LOOTCRATE);
-                            loot_chest.setTagInfo("type", new NBTTagString("loot_chest"));
-
-                            if (ItemStack.areItemStackTagsEqual(reward.item, loot_chest) && lootImporter != null) {
-                                BQLootChestReward loot_reward = new BQLootChestReward();
-                                loot_reward.table = lootImporter.getTable();
-                                quest.rewards.add(loot_reward);
-                            } else if (!reward.item.isEmpty()) {
-                                quest.rewards.add(reward);
-                            }
-                        }
-
-                        break;
-                    }
-
-                    case "bq_standard:choice": {
-                        BQChoiceReward reward = new BQChoiceReward();
-                        reward.items = new ArrayList<>();
-
-                        for (NBTBase rewardItem : rewardNbt.getTagList("choices", 10)) {
-                            ItemStack stack = Utils.nbtItem((NBTTagCompound) rewardItem);
-                            if (!stack.isEmpty()) {
-                                reward.items.add(stack);
-                            }
-                        }
-
-                        if (!reward.items.isEmpty()) {
-                            quest.rewards.add(reward);
-                        }
-
-                        break;
-                    }
-
-                    case "bq_standard:xp": {
-                        BQXPReward reward = new BQXPReward();
-                        reward.levels = rewardNbt.getBoolean("isLevels");
-                        reward.xp = rewardNbt.getInteger("amount");
-                        quest.rewards.add(reward);
-                        break;
-                    }
-
-                    case "bq_standard:command": {
-                        BQCommandReward reward = new BQCommandReward();
-                        reward.command = rewardNbt.getString("command").replace("VAR_NAME", "@p");
-                        reward.player = rewardNbt.getBoolean("viaPlayer");
-                        quest.rewards.add(reward);
-                        break;
-                    }
-
-                    default:
-                        sender.sendMessage(new TextComponentString("Can't import reward with type " + type));
-                        break;
-                }
-            }
-            // endregion rewards
         }
+        // endregion STEP_1
 
+        sender.sendMessage(new TextComponentString("[2/5] Collecting chapter information..."));
+        // region STEP_2
+        boolean duplicateQuest = false;
         for (NBTBase chapterBase : defaultQuests.getTagList("questLines", 10)) {
             NBTTagCompound chapterNbt = (NBTTagCompound) chapterBase;
             NBTTagCompound properties = chapterNbt.getCompoundTag("properties").getCompoundTag("betterquesting");
 
-            BQChapter chapter = new BQChapter();
-            chapters.add(chapter);
-            chapter.name = properties.getString("name").trim();
-            chapter.desc = properties.getString("desc").trim().split("\n");
-            chapter.icon = Utils.nbtItem(properties.getCompoundTag("icon"));
-            chapter.quests = new ArrayList<>();
-            chapter.order = chapterNbt.getInteger("order");
+            // create a new chapter, but don't add it to the file yet
+            Chapter c = new Chapter(f);
+            c.id = f.newID();
+            c.title = properties.getString("name").trim();
+            c.subtitle.addAll(Arrays.asList(properties.getString("desc").trim().split("\n")));
 
+            // TODO: reimplement default icons
+            c.icon = Utils.nbtItem(properties.getCompoundTag("icon")).splitStack(1);
+
+            chapters.put(chapterNbt.getInteger("order"), c);
+
+            //f.chapters.add(c);
+
+            FTBQImporter.LOGGER.debug("Collecting quests for chapter \"{}\"...", c.title);
             for (NBTBase questBase : chapterNbt.getTagList("quests", 10)) {
                 NBTTagCompound questNbt = (NBTTagCompound) questBase;
-                BQQuest quest = questMap.get(questNbt.getInteger("id"));
 
-                if (quest != null && !mappedQuests.contains(quest)) {
+                int qid = questNbt.getInteger("id");
+                if (questMap.containsKey(qid)) {
+                    duplicateQuest = true;
+                } else {
+                    Quest q = new Quest(c);
+                    q.id = f.newID();
+
+                    questMap.put(qid, q);
+
+                    c.quests.add(q);
                     double sizeX = MathHelper.clamp(Math.max(questNbt.getDouble("size"), questNbt.getDouble("sizeX")) / 24D, 0.5, 3);
                     double sizeY = MathHelper.clamp(Math.max(questNbt.getDouble("size"), questNbt.getDouble("sizeY")) / 24D, 0.5, 3);
-                    quest.size = Math.min(sizeX, sizeY);
-                    quest.x = (questNbt.getDouble("x") / 24D) + (sizeX / 2D);
-                    quest.y = (questNbt.getDouble("y") / 24D) + (sizeY / 2D);
-                    chapter.quests.add(quest);
-                    mappedQuests.add(quest);
+                    q.size = Math.min(sizeX, sizeY);
+                    q.x = (questNbt.getDouble("x") / 24D) + (sizeX / 2D);
+                    q.y = (questNbt.getDouble("y") / 24D) + (sizeY / 2D);
+
+                    // We'll have to do this later as we're currently still going through the chapters.
+                    /*
+                    q.title = quest.name;
+                    q.description.addAll(Arrays.asList(quest.description));
+                    q.icon = quest.icon.splitStack(1);
+                    q.canRepeat = quest.repeatTime > 0;
+                    */
+
                 }
+
             }
         }
 
-        chapters.sort(Comparator.comparingInt(ch -> ch.order));
-
-        // add orphan quests
-        BQChapter orphanChapter = new BQChapter();
-        chapters.add(orphanChapter);
-        orphanChapter.name = "Internal";
-        orphanChapter.desc = new String[]{
-                "This chapter contains internal or \"orphaned\" quests,",
-                "which are quests in Better Questing that do not have a chapter associated with them"
-        };
-        orphanChapter.icon = f.icon;
-        orphanChapter.quests = new ArrayList<>(questMap.values());
-        orphanChapter.quests.removeAll(mappedQuests);
-        int table_size = (int) Math.ceil(MathUtils.sqrt(orphanChapter.quests.size()));
-        for (int i = 0; i < orphanChapter.quests.size(); i++) {
-            BQQuest quest = orphanChapter.quests.get(i);
-            quest.size = 1;
-            //noinspection IntegerDivisionInFloatingPointContext
-            quest.x = i / table_size;
-            quest.y = i % table_size;
+        if (duplicateQuest) {
+            sender.sendMessage(new TextComponentString("WARNING: Your quest file contained one or more duplicate quests. Please note that the importer only adds one quest per ID!")
+                    .setStyle(new Style().setColor(TextFormatting.YELLOW)));
         }
+        // endregion STEP_2
 
-        // remap old quest ids to new imported quests
+        sender.sendMessage(new TextComponentString("[3/5] Populating quests..."));
+        // region STEP_3
+        Chapter orphanChapter = new Chapter(f);
+        orphanChapter.id = f.newID();
+        orphanChapter.title = "Internal";
+        orphanChapter.subtitle.add("This chapter contains internal or \"orphaned\" quests,");
+        orphanChapter.subtitle.add("which are quests in Better Questing that do not have a chapter associated with them");
 
-        Map<Integer, Quest> newQuestMap = new HashMap<>();
-        Map<Quest, Map<Integer, Task[]>> questTaskMap = new HashMap<>();
+        for (NBTBase questBase : defaultQuests.getTagList("questDatabase", 10)) {
+            NBTTagCompound questNbt = (NBTTagCompound) questBase;
 
-        for (BQChapter chapter : chapters) {
-            Chapter c = new Chapter(f);
-            c.id = f.newID();
-            f.chapters.add(c);
-            c.title = chapter.name;
-            c.subtitle.addAll(Arrays.asList(chapter.desc));
-
-            Quest icon_quest = null;
-
-            for (BQQuest quest : chapter.quests) {
-                Quest q = new Quest(c);
+            int qid = questNbt.getInteger("questID");
+            if (!questMap.containsKey(qid)) {
+                Quest q = new Quest(orphanChapter);
                 q.id = f.newID();
-                newQuestMap.put(quest.id, q);
-                questTaskMap.put(q, new HashMap<>());
-                c.quests.add(q);
-                q.title = quest.name;
-                q.description.addAll(Arrays.asList(quest.description));
-                q.icon = quest.icon.splitStack(1);
-                q.x = quest.x;
-                q.y = quest.y;
-                q.size = quest.size;
-                q.canRepeat = quest.repeatTime > 0;
 
-                if (default_icons &&
-                        (quest.dependencies == null || quest.dependencies.length == 0) &&
-                        (icon_quest == null || (q.x + q.y) < (icon_quest.x + icon_quest.y))) {
+                questMap.put(qid, q);
 
-                    icon_quest = q;
-                }
+                orphanChapter.quests.add(q);
+            }
 
-                if (quest.isSilent) {
-                    q.disableToast = true;
-                }
+            NBTTagCompound properties = questNbt.getCompoundTag("properties").getCompoundTag("betterquesting");
 
-                for (BQTask task : quest.tasks) {
-                    Task[] t = task.create(q);
-                    for (Task t2 : t) {
-                        t2.id = f.newID();
-                    }
-                    q.tasks.addAll(Arrays.asList(t));
-                    questTaskMap.get(q).put(task.id, t);
-                }
+            boolean teamReward = properties.getBoolean("partysinglereward");
+            boolean autoClaim = properties.getBoolean("autoclaim");
 
-                for (BQReward reward : quest.rewards) {
-                    Reward r = reward.create(q);
+            Quest q = questMap.get(qid);
+            q.title = properties.getString("name").trim();
+            q.description.addAll(Arrays.asList(properties.getString("desc").trim().split("\n")));
+            q.icon = Utils.nbtItem(properties.getCompoundTag("icon")).splitStack(1);
+            q.canRepeat = properties.getInteger("repeattime") > 0;
+            q.orTasks = properties.getString("tasklogic").equalsIgnoreCase("OR");
+            q.disableToast = properties.getBoolean("issilent") || f.disableToast;
 
-                    if (quest.teamReward) {
+            questTaskMap.putIfAbsent(q, new Int2ObjectOpenHashMap<>());
+            deps.put(q, Ints.asList(questNbt.getIntArray("preRequisites")));
+
+            for (NBTBase taskBase : questNbt.getTagList("tasks", 10)) {
+                NBTTagCompound taskNbt = (NBTTagCompound) taskBase;
+                String type = taskNbt.getString("taskID");
+
+                Collection<Task> tasks = Utils.taskConverters.get(type).apply(taskNbt, q);
+                questTaskMap.get(q).put(taskNbt.getInteger("index"), tasks);
+                tasks.forEach(t -> {
+                    t.id = f.newID();
+                    q.tasks.add(t);
+                });
+            }
+
+            if (q.getTags().contains("has_warning")) {
+                sender.sendMessage(new TextComponentString("One or more tasks were skipped while importing '" + q.title + "' (#" + qid + ") " +
+                        "- Please check the log for more details!")
+                        .setStyle(new Style().setColor(TextFormatting.YELLOW)));
+            }
+
+            for (NBTBase rewardBase : questNbt.getTagList("rewards", 10)) {
+                NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
+                String type = rewardNbt.getString("rewardID");
+
+                Collection<Reward> rewards = Utils.rewardConverters.get(type).apply(rewardNbt, q);
+                rewards.forEach(r -> {
+                    r.id = f.newID();
+                    q.rewards.add(r);
+
+                    if (teamReward) {
                         r.team = EnumTristate.TRUE;
                     }
 
-                    r.autoclaim = (reward instanceof BQCommandReward && auto_cmd) ? RewardAutoClaim.INVISIBLE :
-                            quest.autoClaim ? RewardAutoClaim.ENABLED : RewardAutoClaim.DEFAULT;
+                    r.autoclaim = (r instanceof CommandReward && auto_cmd) ? RewardAutoClaim.INVISIBLE :
+                            autoClaim ? RewardAutoClaim.ENABLED : RewardAutoClaim.DEFAULT;
 
-                    r.id = f.newID();
-                    q.rewards.add(r);
-                }
+                });
+
             }
 
-            if (icon_quest != null) {
-                c.icon = icon_quest.icon;
-            } else {
-                c.icon = chapter.icon.splitStack(1);
+            if (q.getTags().contains("has_warning")) {
+                sender.sendMessage(new TextComponentString("One or more rewards were skipped while importing '" + q.title + "' (#" + qid + ") " +
+                        "- Please check the log for more details!")
+                        .setStyle(new Style().setColor(TextFormatting.YELLOW)));
             }
+
+            // clearing out the reward conversion tags
+            q.getTags().clear();
+
         }
 
-        for (BQChapter chapter : chapters) {
-            for (BQQuest quest : chapter.quests) {
-                if (quest.dependencies.length > 0) {
-                    Quest q = newQuestMap.get(quest.id);
+        // add orphan quests
+        if (!orphanChapter.quests.isEmpty()) {
+            sender.sendMessage(new TextComponentString("Your quest file contained one or more orphaned quests. See the quest book after rejoining for more information!")
+                    .setStyle(new Style().setColor(TextFormatting.YELLOW)));
 
-                    for (int d : quest.dependencies) {
-                        BQQuest d1 = questMap.get(d);
-
-                        if (d1 != null) {
-                            Quest q1 = newQuestMap.get(d1.id);
-
-                            if (q1 != null && q != null) {
-                                q.dependencies.add(q1);
-                            }
-                        }
-                    }
-                }
+            orphanChapter.icon = f.icon;
+            int table_size = (int) Math.ceil(MathUtils.sqrt(orphanChapter.quests.size()));
+            List<Quest> quests = orphanChapter.quests;
+            for (int i = 0; i < quests.size(); i++) {
+                Quest q = quests.get(i);
+                q.size = 1;
+                //noinspection IntegerDivisionInFloatingPointContext
+                q.x = i / table_size;
+                q.y = i % table_size;
             }
+
+            chapters.put(chapters.lastIntKey() + 1, orphanChapter);
         }
+        // endregion STEP_3
+
+        sender.sendMessage(new TextComponentString("[4/5] Readding dependencies..."));
+        // region STEP_4
+        // update dependencies after going through all quests
+        questMap.values().forEach(q -> {
+            q.dependencies.addAll(deps.get(q).stream().map(questMap::get).collect(Collectors.toSet()));
+        });
+        // endregion STEP_4
+
+        sender.sendMessage(new TextComponentString("[5/5] Finishing up..."));
+        // region STEP_5
+        f.chapters.addAll(chapters.values());
 
         f.clearCachedData();
         f.save();
         f.saveNow();
 
         NBTTagCompound importedQuests = new NBTTagCompound();
-        newQuestMap.forEach((bqQuest, ftbQuest) -> {
+        questMap.forEach((bqQuest, ftbQuest) -> {
             NBTTagCompound questInfo = new NBTTagCompound();
             importedQuests.setTag(bqQuest.toString(), questInfo);
             questInfo.setInteger("id", ftbQuest.id);
@@ -497,7 +326,7 @@ public class CommandImport extends CommandBase {
             NBTTagCompound taskInfo = new NBTTagCompound();
             questInfo.setTag("tasks", taskInfo);
             questTaskMap.get(ftbQuest).forEach((bqTask, ftbTasks) -> {
-                taskInfo.setIntArray(bqTask.toString(), Arrays.stream(ftbTasks).mapToInt(task -> task.id).toArray());
+                taskInfo.setIntArray(bqTask.toString(), ftbTasks.stream().mapToInt(task -> task.id).toArray());
             });
         });
 
@@ -505,6 +334,7 @@ public class CommandImport extends CommandBase {
         exportedData.setInteger("_version", CONVERT_FILE_VERSION);
         exportedData.setTag("data", importedQuests);
         NBTUtils.writeNBTSafe(new File(Loader.instance().getConfigDir(), "imported_quests.nbt"), exportedData);
+        // endregion STEP_5
 
         sender.sendMessage(new TextComponentString("Finished importing Quests and Loot!"));
         server.getPlayerList().sendMessage(new TextComponentString("Server has successfully imported quests and loot tables from Better Questing! Rejoin the world or server now to get the updated quests."));
@@ -642,7 +472,6 @@ public class CommandImport extends CommandBase {
         }
         NBTTagCompound questProgress = NBTConverter.JSONtoNBT_Object(questProgressJson.getAsJsonObject(), new NBTTagCompound(), true);
 
-        // FIXME: Don't load JSON, instead use NBT for consistency purposes
         NBTTagCompound conversionMapping = NBTUtils.readNBT(new File(Loader.instance().getConfigDir(), "imported_quests.nbt"));
 
         if (conversionMapping == null) {
@@ -780,266 +609,5 @@ public class CommandImport extends CommandBase {
     private static class BQTaskData {
         int id;
         Collection<ForgePlayer> completeUsers;
-    }
-
-    // Quest & Chapter //
-
-    private static class BQQuest {
-        int id;
-        int[] dependencies;
-        String name;
-        String[] description;
-        double x, y, size;
-        boolean isSilent;
-        boolean taskLogicAnd;
-        int repeatTime;
-        ItemStack icon;
-        boolean teamReward;
-        boolean autoClaim;
-        List<BQTask> tasks;
-        List<BQReward> rewards;
-
-        @Override
-        public String toString() {
-            return name + " [" + id + "]";
-        }
-    }
-
-    private static class BQChapter {
-        List<BQQuest> quests;
-        String name;
-        String[] desc;
-        ItemStack icon;
-        int order;
-    }
-
-    // Tasks //
-
-    private static abstract class BQTask {
-        int id;
-
-        abstract Task[] create(Quest quest);
-    }
-
-    private static abstract class BQItemTask extends BQTask {
-        List<ItemStack> items;
-        boolean ignoreNBT;
-        boolean consume;
-    }
-
-    private static class BQItemAndTask extends BQItemTask {
-        @Override
-        Task[] create(Quest quest) {
-            List<Task> tasks = new ArrayList<>();
-            for (ItemStack i : items) {
-                BQItemOrTask container = new BQItemOrTask();
-                container.items = Collections.singletonList(i);
-                container.ignoreNBT = ignoreNBT;
-                container.consume = consume;
-                tasks.addAll(Arrays.asList(container.create(quest)));
-            }
-            return tasks.toArray(new Task[0]);
-        }
-    }
-
-    private static class BQItemOrTask extends BQItemTask {
-        @Override
-        Task[] create(Quest quest) {
-            ItemTask task = new ItemTask(quest);
-            task.items.addAll(items);
-
-            if (items.size() == 1) {
-                ItemStack stack = items.get(0);
-                task.count = stack.getCount();
-
-                if (!stack.isStackable()) {
-                    task.nbtMode = NBTMatchingMode.IGNORE;
-                    task.ignoreDamage = !stack.getHasSubtypes();
-                }
-            }
-
-            if (ignoreNBT) {
-                task.nbtMode = NBTMatchingMode.IGNORE;
-            }
-
-            return new Task[]{task};
-        }
-    }
-
-    private static class BQFluidTask extends BQTask {
-        List<FluidStack> fluids;
-        boolean ignoreNBT;
-
-        @Override
-        Task[] create(Quest quest) {
-            List<Task> tasks = new ArrayList<>();
-            for (FluidStack fluid : fluids) {
-                FluidTask task = new FluidTask(quest);
-                task.fluid = fluid.getFluid();
-                task.amount = fluid.amount;
-                task.fluidNBT = ignoreNBT ? null : fluid.tag;
-                tasks.add(task);
-            }
-            return tasks.toArray(new Task[0]);
-        }
-    }
-
-    private static class BQCheckBoxTask extends BQTask {
-        @Override
-        Task[] create(Quest quest) {
-            return new Task[]{new CheckmarkTask(quest)};
-        }
-    }
-
-    private static class BQHuntTask extends BQTask {
-        String target;
-        long required;
-
-        @Override
-        Task[] create(Quest quest) {
-            KillTask task = new KillTask(quest);
-            task.entity = new ResourceLocation(target);
-            task.value = required;
-            return new Task[]{task};
-        }
-    }
-
-    private static class BQXPTask extends BQTask {
-        long xp;
-        boolean levels;
-        boolean consume;
-
-        @Override
-        Task[] create(Quest quest) {
-            XPTask task = new XPTask(quest);
-            task.value = xp;
-            task.points = !levels;
-            return new Task[]{task};
-        }
-    }
-
-    private static class BQLocationTask extends BQTask {
-        int x, y, z;
-        int dimension;
-        int range;
-
-        @Override
-        Task[] create(Quest quest) {
-            if (range == -1) {
-                DimensionTask task = new DimensionTask(quest);
-                task.dimension = dimension;
-                return new Task[]{task};
-            } else {
-                LocationTask task = new LocationTask(quest);
-                task.dimension = dimension;
-                task.x = x - range / 2;
-                task.y = y - range / 2;
-                task.z = z - range / 2;
-                task.w = range;
-                task.h = range;
-                task.d = range;
-                return new Task[]{task};
-            }
-        }
-    }
-
-    private static class BQAdvancementTask extends BQTask {
-        String advancement;
-        String criterion;
-
-        @Override
-        Task[] create(Quest quest) {
-            AdvancementTask task = new AdvancementTask(quest);
-            task.advancement = advancement;
-            task.criterion = criterion;
-            return new Task[]{task};
-        }
-    }
-
-    private static class BQEnergyTask extends BQTask {
-        long rf;
-
-        @Override
-        Task[] create(Quest quest) {
-            EnergyTask task = new ForgeEnergyTask(quest);
-            task.value = rf;
-            return new Task[]{task};
-        }
-    }
-
-    // Rewards //
-
-    private static abstract class BQReward {
-        abstract Reward create(Quest q);
-    }
-
-    private static class BQItemReward extends BQReward {
-        ItemStack item;
-
-        @Override
-        public Reward create(Quest q) {
-            return new ItemReward(q, item);
-        }
-    }
-
-    private static class BQLootChestReward extends BQReward {
-        RewardTable table;
-
-        @Override
-        public Reward create(Quest q) {
-            RandomReward reward = new RandomReward(q);
-            reward.table = table;
-            return reward;
-        }
-    }
-
-    private static class BQChoiceReward extends BQReward {
-        List<ItemStack> items;
-
-        @Override
-        Reward create(Quest q) {
-            ChoiceReward reward = new ChoiceReward(q);
-            reward.table = new RewardTable(q.chapter.file);
-            reward.table.id = reward.table.file.newID();
-            reward.table.file.rewardTables.add(reward.table);
-            reward.table.title = q.title;
-
-            for (ItemStack stack : items) {
-                reward.table.rewards.add(new WeightedReward(new ItemReward(reward.table.fakeQuest, stack), 1));
-            }
-
-            return reward;
-        }
-    }
-
-    private static class BQXPReward extends BQReward {
-        int xp;
-        boolean levels;
-
-        @Override
-        Reward create(Quest quest) {
-            if (levels) {
-                XPLevelsReward reward = new XPLevelsReward(quest);
-                reward.xpLevels = xp;
-                return reward;
-            } else {
-                XPReward reward = new XPReward(quest);
-                reward.xp = xp;
-                return reward;
-            }
-        }
-    }
-
-    private static class BQCommandReward extends BQReward {
-        String command;
-        boolean player;
-
-        @Override
-        Reward create(Quest quest) {
-            CommandReward reward = new CommandReward(quest);
-            reward.command = command;
-            reward.playerCommand = player;
-            return reward;
-        }
     }
 }
