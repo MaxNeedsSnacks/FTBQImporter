@@ -19,7 +19,7 @@ apply plugin: 'com.wynprice.cursemaven'
 apply from: 'https://raw.githubusercontent.com/MinecraftModDevelopment/Gradle-Collection/master/generic/markdown-git-changelog.gradle'
 
 def ENV = System.getenv()
-version = "forge-1.12.2-1.2.0"
+version = "forge-1.12.2-2.0.0"
 group = package_group
 archivesBaseName = mod_name
 

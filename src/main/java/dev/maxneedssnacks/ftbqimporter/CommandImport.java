@@ -406,8 +406,19 @@ public class CommandImport extends CommandBase {
         Map<ForgePlayer, ForgeTeam> progressTransferMap = new HashMap<>();
 
         for (BQParty party : parties) {
+            if (party.members.isEmpty()) continue;
+
             ForgeTeam team;
             ForgePlayer owner = party.owner;
+
+            if (owner == null) {
+                // safe call since the party isn't empty
+                owner = party.members.iterator().next();
+                if (owner.isOnline()) {
+                    owner.getPlayer().sendMessage(
+                            new TextComponentString("You are now the new owner of the quest party " + party.name + "; quest progress will be synced with your FTB Team!"));
+                }
+            }
 
             // if owner has no forge team, create a new one and make them the owner
             if (!owner.hasTeam()) {
