@@ -46,6 +46,9 @@ import java.io.File;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static dev.maxneedssnacks.ftbqimporter.Utils.WARNING_TAG;
+import static dev.maxneedssnacks.ftbqimporter.Utils.empty;
+
 /**
  * @author LatvianModder, MaxNeedsSnacks
  */
@@ -236,7 +239,7 @@ public class CommandImport extends CommandBase {
                 NBTTagCompound taskNbt = (NBTTagCompound) taskBase;
                 String type = taskNbt.getString("taskID");
 
-                Collection<Task> tasks = Utils.taskConverters.get(type).apply(taskNbt, q);
+                Collection<Task> tasks = Utils.taskConverters.getOrDefault(type, empty()).apply(taskNbt, q);
                 questTaskMap.get(q).put(taskNbt.getInteger("index"), tasks);
                 tasks.forEach(t -> {
                     t.id = f.newID();
@@ -244,7 +247,7 @@ public class CommandImport extends CommandBase {
                 });
             }
 
-            if (q.getTags().contains("has_warning")) {
+            if (q.getTags().contains(WARNING_TAG)) {
                 sender.sendMessage(new TextComponentString("One or more tasks were skipped while importing '" + q.title + "' (#" + qid + ") " +
                         "- Please check the log for more details!")
                         .setStyle(new Style().setColor(TextFormatting.YELLOW)));
@@ -254,7 +257,7 @@ public class CommandImport extends CommandBase {
                 NBTTagCompound rewardNbt = (NBTTagCompound) rewardBase;
                 String type = rewardNbt.getString("rewardID");
 
-                Collection<Reward> rewards = Utils.rewardConverters.get(type).apply(rewardNbt, q);
+                Collection<Reward> rewards = Utils.rewardConverters.getOrDefault(type, empty()).apply(rewardNbt, q);
                 rewards.forEach(r -> {
                     r.id = f.newID();
                     q.rewards.add(r);
@@ -265,12 +268,11 @@ public class CommandImport extends CommandBase {
 
                     r.autoclaim = (r instanceof CommandReward && auto_cmd) ? RewardAutoClaim.INVISIBLE :
                             autoClaim ? RewardAutoClaim.ENABLED : RewardAutoClaim.DEFAULT;
-
                 });
 
             }
 
-            if (q.getTags().contains("has_warning")) {
+            if (q.getTags().contains(WARNING_TAG)) {
                 sender.sendMessage(new TextComponentString("One or more rewards were skipped while importing '" + q.title + "' (#" + qid + ") " +
                         "- Please check the log for more details!")
                         .setStyle(new Style().setColor(TextFormatting.YELLOW)));

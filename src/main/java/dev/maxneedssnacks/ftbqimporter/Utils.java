@@ -29,16 +29,28 @@ import java.util.function.BiFunction;
 
 public final class Utils {
 
+    public static final String WARNING_TAG = "has_warning";
+
     public static final Map<String, BiFunction<NBTTagCompound, Quest, Collection<Task>>> taskConverters = new TreeMap<>();
     public static final Map<String, BiFunction<NBTTagCompound, Quest, Collection<Reward>>> rewardConverters = new TreeMap<>();
+
+    @SafeVarargs
+    public static <T> BiFunction<NBTTagCompound, Quest, Collection<T>> empty(T... donotusethis) {
+        return (nbt, q) -> {
+            FTBQImporter.LOGGER.warn("The quest {} contains a {} with an unrecognised type {} which has been skipped!",
+                    q.title, donotusethis.getClass().getComponentType().getSimpleName(), nbt.getString("taskID"));
+            q.getTags().add(WARNING_TAG);
+            return Collections.emptySet();
+        };
+    }
 
     // task converters
     static {
         final BiFunction<NBTTagCompound, Quest, Collection<Task>> ITEM = (nbt, q) -> {
             if (q.getTags().contains("has_item_task") && q.orTasks) {
                 FTBQImporter.LOGGER.warn("The quest {} contains more than one item task but is using OR task logic!" +
-                        " Since this is not supported in FTB Quests, any other item tasks have been skipped!", q.title);
-                q.getTags().add("has_warning");
+                        " Since support for this is limited in FTB Quests, any other item tasks have been skipped!", q.title);
+                q.getTags().add(WARNING_TAG);
                 return Collections.emptySet();
             }
 
@@ -71,7 +83,7 @@ public final class Utils {
 
             if (tasks.isEmpty()) {
                 FTBQImporter.LOGGER.warn("Item task for quest {} is empty!", q.title);
-                q.getTags().add("has_warning");
+                q.getTags().add(WARNING_TAG);
             }
 
             return tasks;
@@ -89,7 +101,7 @@ public final class Utils {
             if (!nbt.getBoolean("consume")) {
                 FTBQImporter.LOGGER.warn("The quest {} contains an XP task that does not consume experience!" +
                         " Since this is not supported in FTB Quests, the created task will consume XP!", q.title);
-                q.getTags().add("has_warning");
+                q.getTags().add(WARNING_TAG);
             }
             return Collections.singleton(task);
         });
@@ -138,7 +150,7 @@ public final class Utils {
             task.criterion = nbt.getString("conditions");
             FTBQImporter.LOGGER.warn("The quest {} contains a trigger task. Please note that FTB Quests only supports" +
                     " advancement triggers, so this may not work as intended!", q.title);
-            q.getTags().add("has_warning");
+            q.getTags().add(WARNING_TAG);
             return Collections.singleton(task);
         });
 
@@ -169,12 +181,12 @@ public final class Utils {
                 }
             } else {
                 FTBQImporter.LOGGER.warn("Skipped an unsupported, non-consuming fluid task for quest {}!", q.title);
-                q.getTags().add("has_warning");
+                q.getTags().add(WARNING_TAG);
             }
 
             if (tasks.isEmpty()) {
                 FTBQImporter.LOGGER.warn("Fluid task for quest {} is empty!", q.title);
-                q.getTags().add("has_warning");
+                q.getTags().add(WARNING_TAG);
             }
 
             return tasks;
@@ -202,7 +214,7 @@ public final class Utils {
             }
             if (rewards.isEmpty()) {
                 FTBQImporter.LOGGER.warn("Item reward for quest {} is empty!", q.title);
-                q.getTags().add("has_warning");
+                q.getTags().add(WARNING_TAG);
             }
             return rewards;
         });
@@ -227,7 +239,7 @@ public final class Utils {
             } else {
                 table.deleteSelf();
                 FTBQImporter.LOGGER.warn("Choice reward for quest {} is empty!", q.title);
-                q.getTags().add("has_warning");
+                q.getTags().add(WARNING_TAG);
                 return Collections.emptySet();
             }
         });
@@ -271,7 +283,9 @@ public final class Utils {
         }
         itemNbt.removeTag("OreDict");
 
-        if (!stack.isEmpty()) return stack;
+        if (!stack.isEmpty()) {
+            return stack;
+        }
 
         String id = itemNbt.getString("id");
 
@@ -326,7 +340,9 @@ public final class Utils {
 
             return ItemStack.EMPTY;
         } else {
-            if (!OreDictionary.doesOreNameExist(ore)) return ItemStack.EMPTY;
+            if (!OreDictionary.doesOreNameExist(ore)) {
+                return ItemStack.EMPTY;
+            }
             ItemStack stack = OreDictionary.getOres(ore).get(0);
             if (stack.getMetadata() == OreDictionary.WILDCARD_VALUE) {
                 return new ItemStack(stack.getItem(), 1, 0);
